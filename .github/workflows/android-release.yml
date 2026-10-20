@@ -17,12 +17,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      CMAKE_C_COMPILER_LAUNCHER: ccache
-      CMAKE_CXX_COMPILER_LAUNCHER: ccache
-      NDK_CCACHE: ccache
-      USE_CCACHE: 1
+    timeout-minutes: 90
 
     steps:
       - name: Checkout

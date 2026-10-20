@@ -17,12 +17,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      CMAKE_C_COMPILER_LAUNCHER: ccache
-      CMAKE_CXX_COMPILER_LAUNCHER: ccache
-      NDK_CCACHE: ccache
-      USE_CCACHE: 1
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -67,7 +62,8 @@ jobs:
       - name: Build release APKs
         run: |
           cd apps/mobile/android
-          ENVFILE=.env.public ./gradlew assembleRelease --no-daemon
+          ENVFILE=.env.public ./gradlew assembleRelease --no-daemon \
+            -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
 
       - name: Collect APKs
         run: |
