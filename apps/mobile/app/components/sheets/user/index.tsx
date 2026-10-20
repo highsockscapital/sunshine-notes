@@ -63,32 +63,30 @@ export const UserSheet = () => {
               Navigation.navigate("Settings");
             }
           }
-        ].map((item) =>
-          item.hidden ? null : (
-            <Pressable
-              key={item.title}
-              style={{
-                paddingVertical: DefaultAppStyles.GAP_VERTICAL,
-                alignItems: "center",
-                flexDirection: "row",
-                justifyContent: "flex-start",
-                gap: DefaultAppStyles.GAP_SMALL,
-                borderRadius: 0,
-                paddingHorizontal: DefaultAppStyles.GAP
-              }}
-              onPress={() => {
-                item.onPress();
-              }}
-            >
-              <AppIcon
-                color={colors.secondary.icon}
-                name={item.icon}
-                size={AppFontSize.xl}
-              />
-              <Paragraph>{item.title}</Paragraph>
-            </Pressable>
-          )
-        )}
+        ].map((item) => (
+          <Pressable
+            key={item.title}
+            style={{
+              paddingVertical: DefaultAppStyles.GAP_VERTICAL,
+              alignItems: "center",
+              flexDirection: "row",
+              justifyContent: "flex-start",
+              gap: DefaultAppStyles.GAP_SMALL,
+              borderRadius: 0,
+              paddingHorizontal: DefaultAppStyles.GAP
+            }}
+            onPress={() => {
+              item.onPress();
+            }}
+          >
+            <AppIcon
+              color={colors.secondary.icon}
+              name={item.icon}
+              size={AppFontSize.xl}
+            />
+            <Paragraph>{item.title}</Paragraph>
+          </Pressable>
+        ))}
       </View>
     </View>
   );

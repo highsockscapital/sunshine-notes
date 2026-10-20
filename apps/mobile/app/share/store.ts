@@ -25,13 +25,13 @@ import {
 } from "@notesnook/theme";
 import { Appearance } from "react-native";
 import { create } from "zustand";
-import { db, initDatabase as initDatabase } from "../common/database";
+import { db, initDatabase as initLocalDatabase } from "../common/database";
 import { MMKV } from "../common/database/mmkv";
 import { SettingStore } from "../stores/use-setting-store";
 
 export async function initDatabase() {
   if (!db.isInitialized) {
-    await initDatabase();
+    await initLocalDatabase();
   }
 }
 

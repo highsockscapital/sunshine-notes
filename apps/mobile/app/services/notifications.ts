@@ -39,7 +39,7 @@ import notifee, {
 import dayjs, { Dayjs } from "dayjs";
 import { encodeNonAsciiHTML } from "entities";
 import { AppState, Platform } from "react-native";
-import { db, initDatabase as initDatabase } from "../common/database";
+import { db, initDatabase as initLocalDatabase } from "../common/database";
 import { MMKV } from "../common/database/mmkv";
 import { presentDialog } from "../components/dialog/functions";
 import { useTabStore } from "../screens/editor/tiptap/use-tab-store";
@@ -104,7 +104,7 @@ function encodeLine(line: string) {
 
 async function initDatabase() {
   if (!db.isInitialized) {
-    await initDatabase();
+    await initLocalDatabase();
   }
 }
 

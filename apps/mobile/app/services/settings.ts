@@ -100,23 +100,18 @@ function migrateAppLock() {
 }
 
 function migrateSettings(settings: SettingStore["settings"]) {
-  const version = settings.settingsVersion;
-  if (!version) {
+  const version = settings.settingsVersion ?? 0;
+  if (version < 1) {
     settings.settingsVersion = 1;
     settings.privacyScreen = settings.appLockEnabled
       ? true
       : settings.privacyScreen;
     setPrivacyScreen(settings.privacyScreen);
   }
-  if (settings.settingsVersion < 2) {
-    // the Sunshine Notes palette replaced the upstream default themes, so
-    // the cached themes have to be dropped to pick up the new colours
-    settings.lighTheme = ThemeLight;
-    settings.darkTheme = ThemeDark;
-  }
-  if (settings.settingsVersion < 3) {
-    // the brand accent changed from green to terracotta, the cached themes
-    // still carry the old accent
+  if (version < 3) {
+    // the Sunshine Notes palette and the terracotta accent replaced the
+    // upstream defaults, so the cached themes have to be dropped to pick
+    // up the new colours
     settings.lighTheme = ThemeLight;
     settings.darkTheme = ThemeDark;
   }

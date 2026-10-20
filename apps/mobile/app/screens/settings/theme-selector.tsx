@@ -30,7 +30,7 @@ import React from "react";
 import { Linking, TouchableOpacity, View } from "react-native";
 import ReactNativeBlobUtil from "react-native-blob-util";
 import Icon from "react-native-vector-icons/MaterialCommunityIcons";
-import { DatabaseLogger, db } from "../../common/database";
+import { DatabaseLogger } from "../../common/database";
 import { santizeUri } from "../../common/filesystem/utils";
 import SheetProvider from "../../components/sheet-provider";
 import { Button } from "../../components/ui/button";
@@ -419,14 +419,19 @@ const ThemeSetter = ({
   const applyTheme = async () => {
     if (!theme.id) return;
     try {
-      const user = await db.user?.getUser();
-      const fullTheme = fromFile
-        ? (theme as ThemeDefinition)
-        : await themeTrpcClient.installTheme.query({
-            compatibilityVersion: THEME_COMPATIBILITY_VERSION,
-            id: theme.id,
-            userId: user?.id
-          });
+      let fullTheme: ThemeDefinition | undefined = undefined;
+      if (fromFile) {
+        fullTheme = theme as ThemeDefinition;
+      } else {
+        // The built-in themes are already available locally. There is no
+        // theme catalogue to fetch a theme from any more.
+        fullTheme =
+          lightTheme.id === theme.id
+            ? lightTheme
+            : darkTheme.id === theme.id
+              ? darkTheme
+              : undefined;
+      }
       if (!fullTheme) return;
       theme.colorScheme === "dark"
         ? useThemeStore.getState().setDarkTheme(fullTheme)

@@ -66,5 +66,5 @@ export function hasBackupPassword() {
 }
 
 export function clearBackupPassword() {
-  MMKV.delete(BACKUP_PASSWORD_CIPHER);
+  MMKV.removeItem(BACKUP_PASSWORD_CIPHER);
 }
