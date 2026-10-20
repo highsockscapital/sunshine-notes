@@ -380,7 +380,6 @@ function ThemeSelector() {
               }}
             />
           </View>
-        </View>
 
         <LegendList
           numColumns={2}
