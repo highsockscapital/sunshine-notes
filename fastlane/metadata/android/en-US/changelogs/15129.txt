@@ -1,0 +1,8 @@
+- Fix random crashes on system startup and when app enter background
+- Attachments manager now shows progress for uploading/downloading/checking attachments
+- Attachments manager has two new tabs, Errors and Orphaned, to help you manage your attachments
+- New and improved toast message design
+- Fix statusbar flicker on app launch
+- Many other bug fixes and small improvements
+
+Thank you for using Notesnook!

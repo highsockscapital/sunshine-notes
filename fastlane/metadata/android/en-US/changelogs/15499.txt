@@ -1,0 +1,8 @@
+- Fix clearing note title adds generated title instead of staying empty
+- Improved table cell selection, table scrolling, and table cell editing on mobile
+- Fixed app on launch randomly focuses editor instead of notes list
+- Fixed file size check shows error but continues adding the file to editor
+- Note title headline format should get content from first paragraph
+- Minor bug fixes and performance improvements
+
+Thank you for using Notesnook!

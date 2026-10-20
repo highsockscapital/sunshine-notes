@@ -1,0 +1,8 @@
+- Large titles in editor now wrap into multiple lines
+- Added support for font scaling in mobile app
+- Clipper in share extension now supports clipping dynamically loaded websites
+- Cache files are now stored in app's data directory
+- Improved drag/drop support in task lists
+- Bug fixes
+
+Thank you for using Notesnook!

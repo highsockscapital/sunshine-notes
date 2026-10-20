@@ -1,0 +1,402 @@
+/*
+This file is part of the Notesnook project (https://notesnook.com/)
+
+Copyright (C) 2023 Streetwriters (Private) Limited
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+import Sodium from "@ammarahmed/react-native-sodium";
+import { isFeatureAvailable } from "@notesnook/common";
+import { strings } from "@notesnook/intl";
+import {
+  DocumentPickerOptions,
+  keepLocalCopy,
+  KeepLocalCopyResponse,
+  pick as pickFile
+} from "@react-native-documents/picker";
+import { basename, dirname } from "pathe";
+import { Platform } from "react-native";
+import RNFetchBlob from "react-native-blob-util";
+import { Image, openCamera, openPicker } from "react-native-image-crop-picker";
+import { DatabaseLogger, db } from "../../../common/database";
+import filesystem from "../../../common/filesystem";
+import { compressToFile } from "../../../common/filesystem/compress";
+import { santizeUri } from "../../../common/filesystem/utils";
+import AttachImage from "../../../components/dialogs/attach-image-dialog";
+import { ToastManager } from "../../../services/event-manager";
+import { useSettingStore } from "../../../stores/use-setting-store";
+import { useUserStore } from "../../../stores/use-user-store";
+import { useTabStore } from "./use-tab-store";
+import { editorController, editorState } from "./utils";
+
+type PickerOptions = {
+  noteId?: string;
+  tabId?: string;
+  type: "image" | "camera" | "file";
+  reupload: boolean;
+  hash?: string;
+  context?: string;
+  outputType?: "base64" | "url" | "cache";
+};
+
+const file = async (fileOptions: PickerOptions) => {
+  try {
+    const options: DocumentPickerOptions = {
+      mode: "import",
+      allowMultiSelection: false
+    };
+    await db.attachments.generateKey();
+
+    let file;
+    let fileCopyUri: KeepLocalCopyResponse[0];
+    let fileName;
+    try {
+      useSettingStore.getState().setAppDidEnterBackgroundForAction(true);
+      file = (await pickFile(options))[0];
+      fileName = file.name ?? "attachment_" + Date.now();
+      const result = await keepLocalCopy({
+        files: [
+          {
+            uri: file.uri,
+            fileName: fileName
+          }
+        ],
+        destination: "cachesDirectory"
+      });
+      fileCopyUri = result[0];
+    } catch (e) {
+      DatabaseLogger.error(e as Error, "Error picking file");
+      return;
+    }
+
+    const featureResult = await isFeatureAvailable("fileSize", file.size || 0);
+    if (!featureResult.isAllowed) {
+      ToastManager.show({
+        heading: strings.fileTooLarge(),
+        message: featureResult.error,
+        type: "error"
+      });
+      return;
+    }
+
+    if (fileCopyUri.status === "error") {
+      ToastManager.show({
+        heading: strings.failToOpen(),
+        message: "Error copying file",
+        type: "error",
+        context: "global"
+      });
+      return;
+    }
+
+    const uri = santizeUri(fileCopyUri.localUri);
+    const hash = await Sodium.hashFile({
+      uri: uri,
+      type: "url"
+    });
+    if (
+      !(await attachFile(
+        uri,
+        hash,
+        file.type || "application/octet-stream",
+        fileName,
+        fileOptions
+      ))
+    ) {
+      throw new Error("Failed to attach file");
+    }
+
+    RNFetchBlob.fs.unlink(dirname(fileCopyUri.localUri)).catch((e) => {
+      console.log(e, "error");
+    });
+
+    const isNewNote = fileOptions.noteId === undefined;
+    const currentFileNoteId =
+      fileOptions.tabId !== undefined
+        ? useTabStore.getState().getNoteIdForTab(fileOptions.tabId)
+        : undefined;
+
+    const isSameNote = currentFileNoteId === fileOptions.noteId;
+
+    if (
+      fileOptions.tabId !== undefined &&
+      (isSameNote || isNewNote)
+    ) {
+      editorController.current?.commands.insertAttachment(
+        {
+          hash: hash,
+          filename: fileName,
+          mime: file.type || "application/octet-stream",
+          size: file.size || 0,
+          type: "file"
+        },
+        fileOptions.tabId
+      );
+    } else {
+      throw new Error("Failed to attach file, no tabId is set");
+    }
+  } catch (e) {
+    console.log("ERROR OCCURED HERE.", e);
+    ToastManager.show({
+      heading: (e as Error).message,
+      type: "error",
+      context: "global"
+    });
+    DatabaseLogger.error(e);
+  }
+};
+
+const onImagePickerError = (e: unknown) => {
+  const error = e as Error & { code?: string };
+  if (error?.code === "E_PICKER_CANCELLED") return;
+
+  DatabaseLogger.error(error);
+  ToastManager.show({
+    heading: strings.failToOpen(),
+    message: error?.message,
+    type: "error",
+    context: "global"
+  });
+};
+
+const camera = async (options: PickerOptions) => {
+  try {
+    await db.attachments.generateKey();
+    useSettingStore.getState().setAppDidEnterBackgroundForAction(true);
+    openCamera({
+      mediaType: "photo",
+      includeBase64: true,
+      cropping: false,
+      multiple: true,
+      maxFiles: 10,
+      writeTempFile: true,
+      compressImageQuality: 1
+    })
+      .then((response) =>
+        handleImageResponse(
+          Array.isArray(response) ? response : [response],
+          options
+        )
+      )
+      .catch(onImagePickerError);
+  } catch (e) {
+    ToastManager.show({
+      heading: (e as Error).message,
+      type: "error",
+      context: "global"
+    });
+  }
+};
+
+const gallery = async (options: PickerOptions) => {
+  try {
+    await db.attachments.generateKey();
+    useSettingStore.getState().setAppDidEnterBackgroundForAction(true);
+    openPicker({
+      includeBase64: true,
+      mediaType: "photo",
+      maxFiles: 10,
+      cropping: false,
+      multiple: true,
+      compressImageQuality: 1
+    })
+      .then((response) =>
+        handleImageResponse(
+          Array.isArray(response) ? response : [response],
+          options
+        )
+      )
+      .catch(onImagePickerError);
+  } catch (e) {
+    useSettingStore.getState().setAppDidEnterBackgroundForAction(false);
+    ToastManager.show({
+      heading: (e as Error).message,
+      type: "error",
+      context: "global"
+    });
+  }
+};
+
+const pick = async (options: PickerOptions) => {
+  if (editorState().isFocused) {
+    editorState().isFocused = true;
+  }
+
+  useUserStore.getState().setDisableAppLockRequests(true);
+  if (options?.type.startsWith("image") || options?.type === "camera") {
+    if (options.type.startsWith("image")) {
+      gallery(options);
+    } else {
+      camera(options);
+    }
+  } else {
+    file(options);
+  }
+};
+
+const handleImageResponse = async (
+  response: Image[],
+  options: PickerOptions
+) => {
+  const isNewNote = options.noteId === undefined;
+  const result = await AttachImage.present(response, options.context);
+
+  if (!result) return;
+  const compress = result.compress;
+
+  for (const image of response) {
+    const isPng = /(png)/g.test(image.mime);
+    const isJpeg = /(jpeg|jpg)/g.test(image.mime);
+    if (compress && (isPng || isJpeg)) {
+      image.path = await compressToFile(
+        Platform.OS === "ios" ? "file://" + image.path : image.path,
+        isPng ? "PNG" : "JPEG"
+      );
+
+      const stat = await RNFetchBlob.fs.stat(image.path.replace("file://", ""));
+      image.size = stat.size;
+      image.path =
+        Platform.OS === "ios" ? image.path.replace("file://", "") : image.path;
+    }
+
+    const featureResult = await isFeatureAvailable("fileSize", image.size || 0);
+    if (!featureResult.isAllowed) {
+      ToastManager.show({
+        heading: strings.fileTooLarge(),
+        message: featureResult.error,
+        type: "error"
+      });
+      return;
+    }
+
+    const b64 = `data:${image.mime};base64, ` + image.data;
+    const uri = decodeURI(image.path);
+    const hash = await Sodium.hashFile({
+      uri: uri,
+      type: "url"
+    });
+
+    let fileName = image.sourceURL
+      ? basename(image.sourceURL)
+      : image.filename || "image";
+
+    fileName =
+      image.mime === "image/jpeg"
+        ? fileName.replace(/HEIC|HEIF/, "jpeg")
+        : fileName;
+
+    if (!(await attachFile(uri, hash, image.mime, fileName, options))) return;
+
+    RNFetchBlob.fs.unlink(uri).catch((e) => {});
+
+    const currentNoteId =
+      options.tabId !== undefined
+        ? useTabStore.getState().getNoteIdForTab(options.tabId)
+        : undefined;
+
+    const isSameNote = currentNoteId === options.noteId;
+
+    if (
+      options.tabId !== undefined &&
+      (isSameNote || isNewNote)
+    ) {
+      editorController.current?.commands.insertImage(
+        {
+          hash: hash,
+          mime: image.mime,
+          type: "image",
+          dataurl: b64,
+          size: image.size,
+          filename: fileName as string,
+          width: image.width,
+          height: image.height
+        },
+        options.tabId
+      );
+    }
+  }
+};
+
+/**
+ *
+ * @param {string} uri
+ * @param {string} hash
+ * @param {string} type
+ * @param {string} filename
+ * @param {ImagePickerOptions} options
+ * @returns
+ */
+export async function attachFile(
+  uri: string,
+  hash: string,
+  type: string,
+  filename: string,
+  options: PickerOptions
+) {
+  try {
+    const exists = await db.attachments.exists(hash);
+    let encryptionInfo: any;
+    if (options?.hash && options.hash !== hash) {
+      ToastManager.show({
+        heading: strings.fileMismatch(),
+        type: "error",
+        context: "local"
+      });
+      return false;
+    }
+
+    if (!options.reupload && exists) {
+      options.reupload = (await filesystem.getUploadedFileSize(hash)) === 0;
+    }
+
+    if (options.reupload) {
+      DatabaseLogger.log(`Deleting file before reupload. ${hash}`);
+      const deleted = await db.fs().deleteFile(hash, false);
+      if (!deleted)
+        throw new Error(`Failed to delete file before reupload. ${hash}`);
+    }
+
+    if (!exists || options?.reupload) {
+      const key = await db.attachments.generateKey();
+      encryptionInfo = await Sodium.encryptFile(key, {
+        uri: uri,
+        type: options.outputType || "url",
+        hash: hash
+      } as any);
+      encryptionInfo.mimeType = type;
+      encryptionInfo.filename = filename;
+      encryptionInfo.alg = "xcha-stream";
+      encryptionInfo.key = key;
+      if (options?.reupload && exists) {
+        const attachment = await db.attachments.attachment(hash);
+        if (attachment) await db.attachments.reset(attachment?.id);
+      }
+    } else {
+      encryptionInfo = { hash: hash };
+    }
+
+    await db.attachments.add(encryptionInfo);
+    return true;
+  } catch (e) {
+    DatabaseLogger.error(e);
+    RNFetchBlob.fs.unlink(uri).catch((e) => {});
+    return false;
+  }
+}
+
+export default {
+  file,
+  pick
+};

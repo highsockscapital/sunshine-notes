@@ -1,0 +1,4 @@
+- Bring back undo/redo buttons in editor
+- Bug fixes and performance improvements
+
+Thank you for using Notesnook!

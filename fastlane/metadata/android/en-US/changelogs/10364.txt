@@ -1,0 +1,5 @@
+- Added support for markdown with frontmatter in exports
+- Fixed a bug that would randomly cause the app to freeze on launch after using the app for some days.
+- Bug fixes and performance improvements
+
+Thank you for using Notesnook!

@@ -1,0 +1,3 @@
+Notesnook V3 is here, and it's packed with new features and improvements such as bi-directional note linking, better syncing, at-rest encryption, nested notebooks, editor tabs, better app lock and so much more. 
+
+Check out our blogpost to learn about what's new at https://blog.notesnook.com/introducing-notesnook-v3.

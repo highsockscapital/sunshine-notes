@@ -1,0 +1,6 @@
+- Added support to check/uncheck all items in a checklist
+- Now you can open pdfs/images in readonly mode
+- Fixed a bug where users are unable to login when app lock is enabled
+- Bug fixes and performance improvements
+
+Thank you for using Notesnook!

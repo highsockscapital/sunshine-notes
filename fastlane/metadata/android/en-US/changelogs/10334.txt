@@ -1,0 +1,7 @@
+- Fix 24 hour reminder time in date picker
+- Fix pin input hide behind keyboard on session expiry
+- Disallow links in inline code
+- Fix default notebook not set in widget
+- Bug fixes and improvements
+
+Thank you for using Notesnook!

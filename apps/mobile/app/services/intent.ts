@@ -1,0 +1,67 @@
+/*
+This file is part of the Notesnook project (https://notesnook.com/)
+
+Copyright (C) 2023 Streetwriters (Private) Limited
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+import { Platform } from "react-native";
+import { db } from "../common/database";
+import { eOnLoadNote } from "../utils/events";
+import { SunshineModule } from "../utils/sunshine-module";
+import { eSendEvent } from "./event-manager";
+import { fluidTabsRef } from "../utils/global-refs";
+import AddReminder from "../screens/add-reminder";
+
+const launchIntent = Platform.OS === "ios" ? {} : SunshineModule.getIntent();
+let used = false;
+let launched = false;
+export const IntentService = {
+  getLaunchIntent() {
+    if (used || Platform.OS === "ios") return null;
+    used = true;
+    return launchIntent;
+  },
+  onLaunch() {
+    if (launched || Platform.OS === "ios") return;
+    launched = true;
+  },
+  async onAppStateChanged() {
+    if (Platform.OS === "ios") return;
+    try {
+      const intent = SunshineModule.getIntent();
+
+      if (intent["com.sunshine.notes.OpenNoteId"]) {
+        const note = await db.notes.note(
+          intent["com.sunshine.notes.OpenNoteId"]
+        );
+        if (note) {
+          eSendEvent(eOnLoadNote, {
+            item: note
+          });
+          fluidTabsRef.current?.goToPage("editor", false);
+        }
+      } else if (intent["com.sunshine.notes.OpenReminderId"]) {
+        const reminder = await db.reminders.reminder(
+          intent["com.sunshine.notes.OpenReminderId"]
+        );
+        if (reminder) AddReminder.present(reminder);
+      } else if (intent["com.sunshine.notes.NewReminder"]) {
+        AddReminder.present();
+      }
+    } catch (e) {
+      /* empty */
+    }
+  }
+};

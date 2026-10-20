@@ -1,0 +1,86 @@
+/*
+This file is part of the Notesnook project (https://notesnook.com/)
+
+Copyright (C) 2023 Streetwriters (Private) Limited
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+import { KeyboardTypeOptions, TextInput } from "react-native";
+import { eSendEvent } from "../../services/event-manager";
+import { eCloseSimpleDialog, eOpenSimpleDialog } from "../../utils/events";
+import { ButtonProps } from "../ui/button";
+import { FieldValidator, FormRef } from "../ui/input/form-input";
+import { RefObject } from "react";
+
+export type DialogInfo = {
+  title?: string;
+  paragraph?: string;
+  positiveText: string;
+  negativeText: string;
+  background?: string;
+  transparent?: boolean;
+  statusBarTranslucent?: boolean;
+  positivePress?: (...args: any[]) => Promise<any>;
+  onClose?: () => void;
+  positiveType?:
+    | "transparent"
+    | "plain"
+    | "secondary"
+    | "accent"
+    | "inverted"
+    | "shade"
+    | "error"
+    | "errorShade";
+  icon?: string;
+  paragraphColor: string;
+  form?: {
+    formRef: FormRef;
+    items: {
+      name: string;
+      placeholder: string;
+      label?: string;
+      validators: FieldValidator[];
+      defaultValue?: string;
+      ref: RefObject<TextInput | null>;
+    }[];
+    onFormSubmit?: (form: FormRef) => Promise<boolean>;
+  };
+  input: boolean;
+  inputPlaceholder: string;
+  defaultValue: string;
+  // eslint-disable-next-line @typescript-eslint/ban-types
+  context: "global" | "local" | (string & {});
+  secureTextEntry?: boolean;
+  keyboardType?: KeyboardTypeOptions;
+  check?: {
+    info: string;
+    type?: ButtonProps["type"];
+    defaultValue?: boolean;
+  };
+  notice: {
+    text: string;
+    type: "alert" | "information";
+  };
+  disableBackdropClosing: boolean;
+  component: JSX.Element | ((close?: () => void) => JSX.Element);
+};
+
+export function presentDialog(data: Partial<DialogInfo>): void {
+  eSendEvent(eOpenSimpleDialog, data);
+}
+
+export function hideDialog(): void {
+  eSendEvent(eCloseSimpleDialog);
+}

@@ -1,0 +1,40 @@
+{
+  "name": "@notesnook/help",
+  "version": "1.0.0",
+  "scripts": {
+    "document-keyboard-shortcuts": "node scripts/document-keyboard-shortcuts.mjs",
+    "versions": "node scripts/check-strings-fresh.mjs && node scripts/build-versions.mjs",
+    "predev": "npm run versions",
+    "dev": "vitepress dev",
+    "prebuild": "npm run versions",
+    "build": "vitepress build",
+    "preview": "vitepress preview",
+    "version": "node scripts/new-version.mjs",
+    "fork": "node scripts/fork-page.mjs",
+    "strings": "node --experimental-strip-types scripts/check-strings.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/streetwriters/notesnook.git"
+  },
+  "keywords": [
+    "notesnook",
+    "docs",
+    "help"
+  ],
+  "author": "",
+  "license": "GPL-3.0-or-later",
+  "bugs": {
+    "url": "https://github.com/streetwriters/notesnook/issues"
+  },
+  "homepage": "https://github.com/streetwriters/notesnook#readme",
+  "devDependencies": {
+    "@lingui/core": "^5.2.0",
+    "@notesnook/common": "file:../../packages/common",
+    "@notesnook/intl": "file:../../packages/intl",
+    "markdown-it-task-lists": "^2.1.1",
+    "vitepress": "^1.6.4",
+    "vitepress-plugin-tabs": "^0.9.1",
+    "wrangler": "^4.123.0"
+  }
+}

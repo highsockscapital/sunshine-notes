@@ -1,0 +1,382 @@
+/*
+This file is part of the Notesnook project (https://sunshine.com/)
+
+Copyright (C) 2023 Streetwriters (Private) Limited
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+/* eslint-disable @typescript-eslint/no-var-requires */
+
+import React, {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState
+} from "react";
+import { Platform, ViewStyle } from "react-native";
+import WebView from "react-native-webview";
+import { ShouldStartLoadRequest } from "react-native-webview/lib/WebViewTypes";
+import { sunshine } from "../../../e2e/test.ids";
+import { db } from "../../common/database";
+import BiometricService from "../../services/biometrics";
+import {
+  ToastManager,
+  eSendEvent,
+  eSubscribeEvent
+} from "../../services/event-manager";
+import {
+  eEditorReset,
+  eOnLoadNote,
+  eUnlockNote,
+  eUnlockWithBiometrics,
+  eUnlockWithPassword
+} from "../../utils/events";
+import { openLinkInBrowser } from "../../utils/functions";
+import EditorOverlay from "./loading";
+import { EDITOR_URI } from "./source";
+import { EditorProps, useEditorType } from "./tiptap/types";
+import { useEditor } from "./tiptap/use-editor";
+import { useEditorEvents } from "./tiptap/use-editor-events";
+import { syncTabs, useTabStore } from "./tiptap/use-tab-store";
+import {
+  editorController,
+  editorState,
+  openInternalLink,
+  randId
+} from "./tiptap/utils";
+import { fluidTabsRef } from "../../utils/global-refs";
+import { strings } from "@notesnook/intl";
+import { i18n } from "@lingui/core";
+import { useVaultStatus } from "../../hooks/use-vault-status";
+import { useSettingStore } from "../../stores/use-setting-store";
+import { NativeEvents } from "@notesnook/editor-mobile/src/utils/native-events";
+
+const style: ViewStyle = {
+  height: "100%",
+  maxHeight: "100%",
+  width: "100%",
+  alignSelf: "center",
+  backgroundColor: "transparent"
+};
+const onShouldStartLoadWithRequest = (request: ShouldStartLoadRequest) => {
+  if (request.url.includes("nn://")) {
+    openInternalLink(request.url);
+    return false;
+  } else if (request.url.includes("https")) {
+    if (Platform.OS === "ios" && !request.isTopFrame) return true;
+    openLinkInBrowser(request.url);
+    return false;
+  } else {
+    return true;
+  }
+};
+
+const Editor = React.memo(
+  forwardRef<
+    {
+      get: () => useEditorType;
+    },
+    EditorProps
+  >(
+    (
+      {
+        readonly = false,
+        noToolbar = false,
+        noHeader = false,
+        withController = true,
+        editorId = "",
+        onLoad,
+        onChange
+      },
+      ref
+    ) => {
+      const editor = useEditor(editorId || "", readonly, onChange);
+      const onMessage = useEditorEvents(editor, {
+        readonly,
+        noToolbar,
+        noHeader
+      });
+      const [renderKey, setRenderKey] = useState(
+        randId("editor-id") + editorId
+      );
+      useImperativeHandle(ref, () => ({
+        get: () => editor
+      }));
+      useLockedNoteHandler();
+
+      const onError = useCallback(() => {
+        setRenderKey(randId("editor-id") + editorId);
+        editor.state.current.ready = false;
+        editor.state.current.initialLoadCalled = false;
+        editor.setLoading(true);
+      }, [editor]);
+
+      useEffect(() => {
+        const sub = [eSubscribeEvent(eEditorReset, onError)];
+        return () => {
+          sub.forEach((s) => s?.unsubscribe());
+        };
+      }, [onError]);
+
+      useLayoutEffect(() => {
+        setImmediate(() => {
+          onLoad && onLoad();
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [onLoad]);
+
+      if (withController) {
+        editorController.current = editor;
+      }
+
+      return editor.loading ? null : (
+        <>
+          <WebView
+            testID={sunshine.editor.id}
+            ref={editor.ref}
+            key={renderKey}
+            onRenderProcessGone={onError}
+            nestedScrollEnabled
+            onError={onError}
+            injectedJavaScript={`
+              globalThis.__DEV__ = ${__DEV__}
+              globalThis.readonly=${readonly};
+              globalThis.noToolbar=${noToolbar};
+              globalThis.noHeader=${noHeader};
+              globalThis.LINGUI_LOCALE = "${i18n.locale}";
+              globalThis.LINGUI_LOCALE_DATA = ${JSON.stringify({
+                [i18n.locale]: i18n.messages
+              })};
+              globalThis.loadApp();
+          `}
+            useSharedProcessPool={false}
+            javaScriptEnabled={true}
+            focusable={true}
+            onContentProcessDidTerminate={onError}
+            setSupportMultipleWindows={false}
+            overScrollMode="never"
+            scrollEnabled={false}
+            keyboardDisplayRequiresUserAction={false}
+            onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
+            cacheMode="LOAD_DEFAULT"
+            cacheEnabled={true}
+            domStorageEnabled={true}
+            bounces={false}
+            setBuiltInZoomControls={false}
+            setDisplayZoomControls={false}
+            allowFileAccess={true}
+            scalesPageToFit={true}
+            hideKeyboardAccessoryView={false}
+            allowsFullscreenVideo={true}
+            allowFileAccessFromFileURLs={true}
+            allowsInlineMediaPlayback
+            allowUniversalAccessFromFileURLs={true}
+            originWhitelist={["*"]}
+            source={{
+              uri: EDITOR_URI
+            }}
+            style={style}
+            autoManageStatusBarEnabled={false}
+            onMessage={onMessage || undefined}
+          />
+          <EditorOverlay editor={editor} editorId={editorId} />
+        </>
+      );
+    }
+  ),
+  () => true
+);
+
+export default Editor;
+
+const useLockedNoteHandler = () => {
+  const vaultStatus = useVaultStatus();
+  const tab = useTabStore((state) => state.getTab(state.currentTab));
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+
+  useEffect(() => {
+    for (const tab of useTabStore.getState().tabs) {
+      const noteId = useTabStore.getState().getTab(tab.id)?.session?.noteId;
+      if (!noteId) continue;
+      if (tabRef.current && tabRef.current.session?.noteLocked) {
+        useTabStore.getState().updateTab(tabRef.current.id, {
+          session: {
+            locked: true
+          }
+        });
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      useTabStore.setState({
+        biometryAvailable: !!vaultStatus.isBiometryAvailable,
+        biometryEnrolled: !!vaultStatus.biometryEnrolled
+      });
+      syncTabs("biometry");
+    })();
+  }, [tab?.id, vaultStatus.biometryEnrolled, vaultStatus.isBiometryAvailable]);
+
+  useEffect(() => {
+    const unlockWithBiometrics = async () => {
+      try {
+        if (!tabRef.current?.session?.noteLocked || !tabRef.current) return;
+        const credentials = await BiometricService.getCredentials(
+          "Unlock note",
+          "Unlock note to open it in editor."
+        );
+
+        if (
+          credentials &&
+          credentials?.password &&
+          tabRef.current.session?.noteId
+        ) {
+          const note = await db.vault.open(
+            tabRef.current.session?.noteId,
+            credentials?.password
+          );
+
+          eSendEvent(eOnLoadNote, {
+            item: note,
+            refresh: true
+          });
+        } else {
+          if (tabRef.current && tabRef.current.session?.locked) {
+            editorController.current?.commands.focusPassInput();
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    const onSubmit = async ({
+      password,
+      biometrics: enrollBiometrics,
+      resolverId
+    }: {
+      password: string;
+      biometrics?: boolean;
+      resolverId?: string;
+    }) => {
+      if (!tabRef.current?.session?.noteId || !tabRef.current) return;
+
+      if (!password || password.trim().length === 0) {
+        if (resolverId) {
+          editorController.current?.postMessage(NativeEvents.resolve, {
+            resolverId,
+            data: { success: false, error: strings.passwordNotEntered() }
+          });
+        }
+        return;
+      }
+
+      try {
+        const note = await db.vault.open(
+          tabRef.current?.session?.noteId,
+          password
+        );
+
+        if (enrollBiometrics && note) {
+          try {
+            const unlocked = await db.vault.unlock(password);
+            if (!unlocked) throw new Error(strings.passwordIncorrect());
+            await BiometricService.storeCredentials(password);
+            eSendEvent("vaultUpdated");
+            ToastManager.show({
+              heading: strings.biometricUnlockEnabled(),
+              type: "success",
+              context: "global"
+            });
+            const biometry = await BiometricService.isBiometryAvailable();
+            const fingerprint = await BiometricService.hasInternetCredentials();
+            useTabStore.setState({
+              biometryAvailable: !!biometry,
+              biometryEnrolled: !!fingerprint
+            });
+            syncTabs();
+          } catch (e) {}
+        }
+
+        if (resolverId) {
+          editorController.current?.postMessage(NativeEvents.resolve, {
+            resolverId,
+            data: { success: true }
+          });
+        }
+
+        eSendEvent(eOnLoadNote, { item: note, refresh: true });
+      } catch (e) {
+        if (resolverId) {
+          editorController.current?.postMessage(NativeEvents.resolve, {
+            resolverId,
+            data: { success: false, error: strings.passwordIncorrect() }
+          });
+        }
+      }
+    };
+
+    const unlock = (forced?: boolean) => {
+      const isMovedAway =
+        useSettingStore.getState().deviceMode !== "mobile"
+          ? false
+          : editorState().movedAway;
+      if (
+        tabRef.current?.session?.locked &&
+        useTabStore.getState().biometryAvailable &&
+        useTabStore.getState().biometryEnrolled &&
+        (!isMovedAway || forced)
+      ) {
+        setTimeout(() => {
+          unlockWithBiometrics();
+        }, 150);
+      } else {
+        if (!editorState().movedAway) {
+          setTimeout(() => {
+            if (tabRef.current && tabRef.current?.session?.locked) {
+              editorController.current?.commands.focus(tabRef.current?.id);
+            }
+          }, 100);
+        }
+      }
+    };
+
+    const subs = [
+      eSubscribeEvent(eUnlockNote, unlock),
+      eSubscribeEvent(eUnlockWithBiometrics, () => {
+        unlock(true);
+      }),
+      eSubscribeEvent(eUnlockWithPassword, onSubmit)
+    ];
+
+    if (
+      tabRef.current?.session?.locked &&
+      (fluidTabsRef.current?.page() === "editor" ||
+        useSettingStore.getState().deviceMode !== "mobile")
+    ) {
+      unlock();
+    }
+    return () => {
+      subs.map((s) => s?.unsubscribe());
+    };
+  }, [tab?.id, tab?.session?.locked]);
+
+  return null;
+};

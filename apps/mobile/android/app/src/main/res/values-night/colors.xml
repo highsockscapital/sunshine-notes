@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bootsplash_background">#161610</color>
+    <color name="background">#161610</color>
+    <color name="border">#2B2B23</color>
+    <color name="text">#F6F3E7</color>
+</resources>

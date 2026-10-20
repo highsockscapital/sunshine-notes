@@ -1,0 +1,194 @@
+/*
+This file is part of the Notesnook project (https://sunshine.com/)
+
+Copyright (C) 2023 Streetwriters (Private) Limited
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+import { useThemeColors } from "@notesnook/theme";
+import { useRoute } from "@react-navigation/native";
+import React, { useCallback, useEffect } from "react";
+import { Keyboard, TouchableOpacity, View, ViewStyle } from "react-native";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming
+} from "react-native-reanimated";
+import Icon from "react-native-vector-icons/MaterialCommunityIcons";
+import { sunshine } from "../../../e2e/test.ids";
+import { editorState } from "../../screens/editor/tiptap/utils";
+import { useScreenshotModeStore } from "../../stores/use-screenshot-mode-store";
+import { useSelectionStore } from "../../stores/use-selection-store";
+import { useSettingStore } from "../../stores/use-setting-store";
+import { getElevationStyle } from "../../utils/elevation";
+import { AppFontSize, normalize } from "../../utils/size";
+import { DefaultAppStyles } from "../../utils/styles";
+import { hexToRGBA, RGB_Linear_Shade } from "../../utils/colors";
+import useGlobalSafeAreaInsets from "../../hooks/use-global-safe-area-insets";
+
+interface FloatingButtonProps {
+  onPress: () => void;
+  color?: string;
+  shouldShow?: boolean;
+  alwaysVisible?: boolean;
+  icon?: string;
+  testID?: string;
+  position?: "left" | "right";
+  size?: "small" | "large";
+  style?: ViewStyle;
+  hideOnKeyboard?: boolean;
+}
+
+const FloatingButton = ({
+  onPress,
+  color,
+  alwaysVisible = false,
+  icon,
+  testID,
+  position = "right",
+  size = "large",
+  style,
+  hideOnKeyboard = true
+}: FloatingButtonProps) => {
+  const { colors } = useThemeColors();
+  const deviceMode = useSettingStore((state) => state.deviceMode);
+  const selectionMode = useSelectionStore((state) => state.selectionMode);
+  const screenshotMode = useScreenshotModeStore((state) => state.enabled);
+  const translate = useSharedValue(0);
+  const keyboardHeight = useSharedValue(0);
+  const route = useRoute();
+  const insets = useGlobalSafeAreaInsets();
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      {
+        translateX: hideOnKeyboard ? translate.value : 0
+      },
+      {
+        translateY: hideOnKeyboard ? translate.value : 0
+      }
+    ],
+    bottom: hideOnKeyboard ? 15 : keyboardHeight.value + 15
+  }));
+
+  const animate = useCallback(
+    (toValue: number) => {
+      translate.value = withTiming(toValue, {
+        duration: 250,
+        easing: Easing.elastic(1)
+      });
+    },
+    [translate]
+  );
+
+  useEffect(() => {
+    animate(selectionMode ? 150 : 0);
+  }, [animate, selectionMode]);
+
+  useEffect(() => {
+    const onKeyboardHide = () => {
+      editorState().keyboardState = false;
+      if (deviceMode !== "mobile") return;
+      animate(0);
+      keyboardHeight.value = withTiming(0);
+    };
+
+    const onKeyboardShow = (e: any) => {
+      editorState().keyboardState = true;
+      if (deviceMode !== "mobile") return;
+      if (hideOnKeyboard) {
+        animate(150);
+      } else {
+        keyboardHeight.value = withTiming(
+          e.endCoordinates.height - insets.bottom,
+          {
+            duration: 250
+          }
+        );
+      }
+    };
+
+    const sub = [
+      Keyboard.addListener("keyboardDidShow", onKeyboardShow),
+      Keyboard.addListener("keyboardDidHide", onKeyboardHide)
+    ];
+    return () => {
+      sub.forEach((sub) => sub.remove());
+    };
+  }, [deviceMode, animate, hideOnKeyboard, keyboardHeight, insets.bottom]);
+
+  return deviceMode !== "mobile" && !alwaysVisible ? null : screenshotMode ? null : (
+    <Animated.View
+      style={[
+        {
+          position: "absolute",
+          right: position === "right" ? DefaultAppStyles.GAP - 7 : undefined,
+          left: position === "left" ? DefaultAppStyles.GAP - 7 : undefined,
+          bottom: 15,
+          zIndex: 10,
+          padding: 15,
+          ...style
+        },
+        animatedStyle
+      ]}
+      pointerEvents="box-none"
+    >
+      <TouchableOpacity
+        testID={testID || sunshine.buttons.add}
+        activeOpacity={0.95}
+        style={{
+          ...getElevationStyle(5),
+          borderRadius: size === "small" ? 15 : 20,
+          borderTopWidth: 0,
+          borderBottomWidth: 0,
+          borderLeftWidth: 0,
+          borderRightWidth: 0,
+          backgroundColor: colors.primary.background
+        }}
+        onPress={onPress}
+      >
+        <View
+          style={{
+            alignItems: "center",
+            justifyContent: "center",
+            height: normalize(size === "small" ? 40 : 60),
+            width: normalize(size === "small" ? 40 : 60),
+            backgroundColor: color
+              ? RGB_Linear_Shade(0.87, hexToRGBA(color))
+              : colors.primary.shade,
+            borderRadius: size === "small" ? 15 : 20
+          }}
+        >
+          <Icon
+            name={
+              icon
+                ? icon
+                : route.name === "Notebooks"
+                  ? "notebook-plus"
+                  : route.name === "Trash"
+                    ? "delete"
+                    : "plus"
+            }
+            color={color || colors.primary.accent}
+            size={size === "small" ? AppFontSize.xl : AppFontSize.xxxl}
+          />
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+};
+
+export { FloatingButton };

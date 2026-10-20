@@ -1,0 +1,4 @@
+- Added push/pull changes to troubleshoot sync issues in settings
+- Bug fixes and performance improvements
+
+Thank you for using Notesnook!

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html style="height: 100%" lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="favicon.ico" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1"
+    />
+    <meta name="theme-color" content="#000000" />
+    <link href="fonts.css" rel="stylesheet" />
+    <style>
+      body {
+        height: 100%;
+        font-family: "Inter";
+      }
+
+      /* p { */
+      /* font-family: "Inter"; */
+      /* color: var(--nn_primary_paragraph) ## TODO: use fixed color */
+      /* } */
+
+      ::selection {
+        color: white;
+        background-color: var(--nn_primary_accent);
+      }
+
+      ::placeholder {
+        color: var(--nn_primary_placeholder);
+      }
+
+      p.is-editor-empty:first-child::before {
+        color: var(--nn_primary_placeholder) !important;
+      }
+
+      .ProseMirror > :first-child {
+        margin-top: 5px !important;
+      }
+
+      .ProseMirror:first-child {
+        margin-top: 0px !important;
+      }
+
+      #root {
+        height: 100%;
+        display: flex;
+      }
+
+      #statusbar p {
+        font-family: "Inter";
+      }
+
+      .ProseMirror h1,
+      .ProseMirror h2,
+      .ProseMirror h3,
+      .ProseMirror h4,
+      .ProseMirror h5,
+      .ProseMirror h6 {
+        padding-right: 35px;
+      }
+
+      .ProseMirror h1::before,
+      .ProseMirror h2::before {
+        width: 25px !important;
+        height: 25px !important;
+        background-size: 25 !important;
+      }
+
+      .ProseMirror h3::before,
+      .ProseMirror h4::before {
+        width: 22px !important;
+        height: 22px !important;
+        background-size: 22 !important;
+      }
+
+      .ProseMirror h5::before,
+      .ProseMirror h6::before {
+        width: 20px !important;
+        height: 20px !important;
+        background-size: 20 !important;
+      }
+
+      .ProseMirror h1::before,
+      .ProseMirror h2::before,
+      .ProseMirror h3::before,
+      .ProseMirror h4::before,
+      .ProseMirror h5::before,
+      .ProseMirror h6::before {
+        right: 10px !important;
+        left: unset !important;
+        opacity: 1 !important;
+      }
+
+      .ProseMirror h1[dir="rtl"]::after,
+      .ProseMirror h2[dir="rtl"]::after,
+      .ProseMirror h3[dir="rtl"]::after,
+      .ProseMirror h4[dir="rtl"]::after,
+      .ProseMirror h5[dir="rtl"]::after,
+      .ProseMirror h6[dir="rtl"]::after {
+        left: 10px !important;
+        right: unset !important;
+        opacity: 1 !important;
+      }
+
+      .ProseMirror h1[dir="rtl"],
+      .ProseMirror h2[dir="rtl"],
+      .ProseMirror h3[dir="rtl"],
+      .ProseMirror h4[dir="rtl"],
+      .ProseMirror h5[dir="rtl"],
+      .ProseMirror h6[dir="rtl"] {
+        padding-right: 0px;
+        padding-left: 35px;
+      }
+
+      .ProseMirror h1[data-collapsed="true"]::before,
+      .ProseMirror h2[data-collapsed="true"]::before,
+      .ProseMirror h3[data-collapsed="true"]::before,
+      .ProseMirror h4[data-collapsed="true"]::before,
+      .ProseMirror h5[data-collapsed="true"]::before,
+      .ProseMirror h6[data-collapsed="true"]::before {
+        transform: rotate(90deg) !important;
+        opacity: 1;
+      }
+
+      .ProseMirror h1[data-collapsed="true"]::after,
+      .ProseMirror h2[data-collapsed="true"]::after,
+      .ProseMirror h3[data-collapsed="true"]::after,
+      .ProseMirror h4[data-collapsed="true"]::after,
+      .ProseMirror h5[data-collapsed="true"]::after,
+      .ProseMirror h6[data-collapsed="true"]::after {
+        transform: rotate(-90deg) !important;
+        opacity: 1;
+      }
+    </style>
+    <meta name="description" content="Sunshine Notes editor for mobile" />
+    <!--
+      manifest.json provides metadata used when your web app is installed on a
+      user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
+    -->
+    <link rel="manifest" href="manifest.json" />
+    <!--
+      Notice the use of %PUBLIC_URL% in the tags above.
+      It will be replaced with the URL of the `public` folder during the build.
+      Only files inside the `public` folder can be referenced from the HTML.
+
+      Unlike "/favicon.ico" or "favicon.ico", "%PUBLIC_URL%/favicon.ico" will
+      work correctly both with client-side routing and a non-root public URL.
+      Learn how to configure a non-root public URL by running `npm run build`.
+    -->
+    <title>Sunshine Notes editor</title>
+  </head>
+
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    <!--
+      This HTML file is a template.
+      If you open it directly in the browser, you will see an empty page.
+
+      You can add webfonts, meta tags, or analytics to this file.
+      The build step will place the bundled scripts into the <body> tag.
+
+      To begin the development, run `npm start` or `yarn start`.
+      To create a production bundle, use `npm run build` or `yarn build`.
+    -->
+  </body>
+</html>

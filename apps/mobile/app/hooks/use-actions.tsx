@@ -1,0 +1,1172 @@
+/*
+This file is part of the Notesnook project (https://notesnook.com/)
+
+Copyright (C) 2023 Streetwriters (Private) Limited
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+/* eslint-disable no-inner-declarations */
+import { isFeatureAvailable, useAreFeaturesAvailable } from "@notesnook/common";
+import {
+  Color,
+  createInternalLink,
+  isEncryptedContent,
+  Item,
+  ItemReference,
+  Note,
+  Notebook,
+  VAULT_ERRORS
+} from "@notesnook/core";
+import { strings } from "@notesnook/intl";
+import { useThemeColors } from "@notesnook/theme";
+import { DisplayedNotification } from "@notifee/react-native";
+import Clipboard from "@react-native-clipboard/clipboard";
+import React, { useEffect, useRef, useState } from "react";
+import { InteractionManager, Platform } from "react-native";
+import Share from "react-native-share";
+import { DatabaseLogger, db } from "../common/database";
+import { AttachmentDialog } from "../components/attachments";
+import { presentDialog } from "../components/dialog/functions";
+import NoteHistory from "../components/note-history";
+import { AddNotebookSheet } from "../components/sheets/add-notebook";
+import ExportNotesSheet from "../components/sheets/export-notes";
+import { ReferencesList } from "../components/sheets/references";
+import { useSideBarDraggingStore } from "../components/side-menu/dragging-store";
+import { ButtonProps } from "../components/ui/button";
+import AddReminder from "../screens/add-reminder";
+import { useTabStore } from "../screens/editor/tiptap/use-tab-store";
+import RelationsList from "../screens/relations-list";
+import {
+  eSendEvent,
+  eSubscribeEvent,
+  openVault,
+  presentSheet,
+  ToastManager,
+  VaultRequestType
+} from "../services/event-manager";
+import Navigation from "../services/navigation";
+import Notifications from "../services/notifications";
+import SettingsService from "../services/settings";
+import { useArchivedStore } from "../stores/use-archived-store";
+import { useMenuStore } from "../stores/use-menu-store";
+import useNavigationStore from "../stores/use-navigation-store";
+import { useRelationStore } from "../stores/use-relation-store";
+import { useSelectionStore } from "../stores/use-selection-store";
+import { useSettingStore } from "../stores/use-setting-store";
+import { useTagStore } from "../stores/use-tag-store";
+import {
+  eCloseSheet,
+  eMenuItemUpdate,
+  eUpdateNoteInEditor
+} from "../utils/events";
+import { deleteItems } from "../utils/functions";
+import { convertNoteToText } from "../utils/note-to-text";
+import { SunshineModule } from "../utils/sunshine-module";
+import { sleep } from "../utils/time";
+
+import DatePickerComponent from "../components/date-picker";
+
+export type ActionId =
+  | "select"
+  | "archive"
+  | "restore"
+  | "delete"
+  | "reorder"
+  | "rename-tag"
+  | "rename-color"
+  | "pin"
+  | "add-shortcut"
+  | "rename-notebook"
+  | "add-notebook"
+  | "edit-notebook"
+  | "default-notebook"
+  | "move-notes"
+  | "move-notebook"
+  | "disable-reminder"
+  | "edit-reminder"
+  | "delete-reminder"
+  | "delete"
+  | "delete-trash"
+  | "add-reminder"
+  | "copy"
+  | "share"
+  | "read-only"
+  | "local-only"
+  | "duplicate"
+  | "add-note"
+  | "attachments"
+  | "history"
+  | "copy-link"
+  | "copy-id"
+  | "reminders"
+  | "lock-unlock"
+  | "publish"
+  | "export"
+  | "notebooks"
+  | "add-tag"
+  | "references"
+  | "pin-to-notifications"
+  | "favorite"
+  | "remove-from-notebook"
+  | "trash"
+  | "default-homepage"
+  | "default-tag"
+  | "launcher-shortcut"
+  | "expiry-date"
+  | "spell-check";
+
+export type Action = {
+  id: ActionId;
+  title: string;
+  icon: string;
+  onPress: () => void;
+  isToggle?: boolean;
+  checked?: boolean;
+  pro?: boolean;
+  hidden?: boolean;
+  activeColor?: string;
+  type?: ButtonProps["type"];
+  locked?: boolean;
+};
+
+export const Default_Drag_Action: Action = {
+  id: "reorder",
+  title: strings.reorder(),
+  icon: "sort-ascending",
+  onPress: async () => {
+    const feature = await isFeatureAvailable("customizableSidebar");
+    useSideBarDraggingStore.setState({
+      dragging: true
+    });
+    eSendEvent(eCloseSheet);
+  }
+};
+
+function isNotePinnedInNotifications(item: Item) {
+  const pinned = Notifications.getPinnedNotes();
+  if (!pinned || pinned.length === 0) {
+    return undefined;
+  }
+  const index = pinned.findIndex((notif) => notif.id === item.id);
+  if (index !== -1) {
+    return pinned[index];
+  }
+  return undefined;
+}
+
+export const useActions = ({
+  close,
+  item: propItem,
+  customActionHandlers
+}: {
+  item: Item;
+  close: () => void;
+  customActionHandlers?: Record<ActionId, () => void>;
+}) => {
+  const features = useAreFeaturesAvailable([
+    "defaultNotebookAndTag",
+    "activeReminders",
+    "pinNoteInNotification",
+    "shortcuts",
+    "notebooks",
+    "customizableSidebar",
+    "customHomepage",
+    "androidLauncherShortcuts",
+    "expiringNotes"
+  ]);
+  const [item, setItem] = useState(propItem);
+  const { colors } = useThemeColors();
+  const setMenuPins = useMenuStore((state) => state.setMenuPins);
+  const [isPinnedToMenu, setIsPinnedToMenu] = useState(
+    db.shortcuts.exists(item.id)
+  );
+  const processingId = useRef<"shareNote" | "copyContent">(undefined);
+  const [notifPinned, setNotifPinned] = useState<DisplayedNotification>();
+  const [defaultNotebook, setDefaultNotebook] = useState(
+    db.settings.getDefaultNotebook()
+  );
+  const [defaultTag, setDefaultTag] = useState(db.settings.getDefaultTag());
+
+  const [noteInCurrentNotebook, setNoteInCurrentNotebook] = useState(false);
+  const [locked, setLocked] = useState(false);
+  const isHomepage = useSettingStore(
+    (state) =>
+      state.settings.homepageV2?.type === item.type &&
+      state.settings.homepageV2?.id === item.id
+  );
+
+  useEffect(() => {
+    if (item.type === "note") {
+      db.vaults.itemExists(item).then(async (locked) => {
+        setLocked(locked);
+        if (!locked) {
+          const content = await db.content.findByNoteId(item.id);
+          if (content && isEncryptedContent(content)) {
+            setLocked(true);
+          }
+        }
+      });
+    }
+  }, [item]);
+
+  useEffect(() => {
+    if (item.type !== "note") return;
+    setNotifPinned(isNotePinnedInNotifications(item));
+    setIsPinnedToMenu(db.shortcuts.exists(item.id));
+  }, [item]);
+
+  useEffect(() => {
+    const { currentRoute, focusedRouteId } = useNavigationStore.getState();
+    if (item.type !== "note" || currentRoute !== "Notebook" || !focusedRouteId)
+      return;
+
+    !!db.relations
+      .to(item, "notebook")
+      .selector.find((v) => v("id", "==", focusedRouteId))
+      .then((notebook) => {
+        setNoteInCurrentNotebook(!!notebook);
+      });
+  }, [item]);
+
+  useEffect(() => {
+    const sub = eSubscribeEvent(
+      Notifications.Events.onUpdate,
+      async (type: string) => {
+        if (type === "unpin") {
+          await Notifications.get();
+          setNotifPinned(isNotePinnedInNotifications(item));
+        }
+      }
+    );
+    return () => {
+      sub?.unsubscribe();
+    };
+  }, [item]);
+
+  async function restoreTrashItem() {
+    close();
+    await db.trash.restore(item.id);
+    Navigation.queueRoutesForUpdate();
+    const type = item.type === "trash" ? item.itemType : item.type;
+    ToastManager.show({
+      heading:
+        type === "note"
+          ? "Note restored from trash"
+          : "Notebook restored from trash",
+      type: "success"
+    });
+  }
+
+  async function pinItem() {
+    if (!item.id) return;
+    if (item.type === "note") {
+      await db.notes.pin(!item?.pinned, item.id);
+      setItem((await db.notes.note(item.id)) as Item);
+    } else if (item.type === "notebook") {
+      await db.notebooks.pin(!item?.pinned, item.id);
+      setItem((await db.notebooks.notebook(item.id)) as Item);
+    }
+    Navigation.queueRoutesForUpdate();
+  }
+
+  async function createMenuShortcut() {
+    if (item.type !== "notebook" && item.type !== "tag") return;
+
+    close();
+    try {
+      if (isPinnedToMenu) {
+        await db.shortcuts.remove(item.id);
+      } else {
+        await db.shortcuts.add({
+          itemId: item.id,
+          itemType: item.type
+        });
+      }
+      setIsPinnedToMenu(db.shortcuts.exists(item.id));
+      setMenuPins();
+    } catch (e) {
+      console.error("error", e);
+    }
+  }
+
+  async function renameTag() {
+    if (item.type !== "tag") return;
+
+    close();
+    await sleep(300);
+    presentDialog({
+      title: strings.renameTag(),
+      positivePress: async (value: string) => {
+        if (!value || value === "" || value.trimStart().length == 0) return;
+        try {
+          await db.tags.add({
+            id: item.id,
+            title: value
+          });
+          eSendEvent(Navigation.routeNames.TaggedNotes);
+          InteractionManager.runAfterInteractions(() => {
+            useTagStore.getState().refresh();
+            useMenuStore.getState().setMenuPins();
+            Navigation.queueRoutesForUpdate();
+            useRelationStore.getState().update();
+          });
+        } catch (e) {
+          ToastManager.error(e as Error, undefined, "local");
+        }
+      },
+      input: true,
+      defaultValue: item.title,
+      inputPlaceholder: "Enter title of tag",
+      positiveText: strings.save()
+    });
+  }
+
+  async function renameColor() {
+    if (item.type !== "color") return;
+    close();
+    await sleep(300);
+    presentDialog({
+      title: strings.renameColor(),
+      input: true,
+      inputPlaceholder: strings.name(),
+      defaultValue: item.title,
+      positivePress: async (value) => {
+        if (!value || value.trim().length === 0) {
+          ToastManager.error(
+            new Error(strings.nameIsRequired()),
+            undefined,
+            "local"
+          );
+          return;
+        }
+        await db.colors.add({
+          id: item.id,
+          title: value
+        });
+
+        eSendEvent(Navigation.routeNames.ColoredNotes);
+        useMenuStore.getState().setColorNotes();
+      },
+      positiveText: strings.rename()
+    });
+  }
+
+  const deleteItem = async () => {
+    close();
+    await sleep(300);
+
+    if (
+      item.type === "tag" ||
+      item.type === "reminder" ||
+      item.type === "color"
+    ) {
+      presentDialog({
+        title: strings.doActions.delete.unknown(item.type, 1),
+        paragraph: strings.actionConfirmations.delete.unknown(item.type, 1),
+        positivePress: async () => {
+          if (item.type === "reminder") {
+            await db.reminders.remove(item.id);
+            Notifications.setupReminders(true);
+          } else if (item.type === "color") {
+            await db.colors.remove(item.id);
+            useMenuStore.getState().setColorNotes();
+          } else {
+            await db.tags.remove(item.id);
+          }
+
+          setImmediate(() => {
+            useTagStore.getState().refresh();
+            Navigation.queueRoutesForUpdate();
+            useRelationStore.getState().update();
+          });
+        },
+        positiveText: strings.delete(),
+        positiveType: "errorShade"
+      });
+      return;
+    }
+
+    if (item.type === "note" && (await db.vaults.itemExists(item))) {
+      openVault({
+        requestType: VaultRequestType.DeleteNote,
+        item: item,
+        title: strings.deleteNote(),
+        description: strings.unlockToDelete(),
+        buttonTitle: strings.delete(),
+        positiveButtonType: "errorShade"
+      });
+    } else {
+      try {
+        await deleteItems(item.type, [item.id]);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  };
+
+  async function deleteTrashItem() {
+    if (item.type !== "trash") return;
+    close();
+    await sleep(300);
+    presentDialog({
+      title: strings.doActions.delete.unknown(item.itemType, 1),
+      paragraph: strings.actionConfirmations.delete.unknown(item.itemType, 1),
+      positiveText: strings.delete(),
+      negativeText: strings.cancel(),
+      positivePress: async () => {
+        await db.trash.delete(item.id);
+        setImmediate(() => {
+          Navigation.queueRoutesForUpdate();
+          useSelectionStore.getState().setSelectionMode(undefined);
+          ToastManager.show({
+            heading: strings.actions.deleted.unknown(item.itemType, 1),
+            type: "success",
+            context: "local"
+          });
+        });
+      },
+      positiveType: "errorShade"
+    });
+  }
+
+  const actions: Action[] = [];
+
+  if (item.type === "tag") {
+    actions.push({
+      id: "rename-tag",
+      title: strings.rename(),
+      icon: "square-edit-outline",
+      onPress: renameTag
+    });
+  }
+
+  if (item.type === "color") {
+    actions.push({
+      id: "rename-color",
+      title: strings.rename(),
+      icon: "square-edit-outline",
+      onPress: renameColor
+    });
+  }
+
+  if (item.type === "reminder") {
+    actions.push(
+      {
+        id: "disable-reminder",
+        title: !item.disabled
+          ? strings.turnOffReminder()
+          : strings.turnOnReminder(),
+        icon: !item.disabled ? "bell-off-outline" : "bell",
+        onPress: async () => {
+          close();
+          await db.reminders.add({
+            ...item,
+            disabled: !item.disabled
+          });
+          Notifications.scheduleNotification(item);
+          useRelationStore.getState().update();
+          Navigation.queueRoutesForUpdate();
+        }
+      },
+      {
+        id: "edit-reminder",
+        title: strings.editReminder(),
+        icon: "pencil",
+        onPress: async () => {
+          AddReminder.present(item);
+          close();
+        }
+      }
+    );
+  }
+
+  if (item.type === "trash") {
+    actions.push(
+      {
+        id: "restore",
+        title: strings.restore(),
+        icon: "delete-restore",
+        onPress: restoreTrashItem
+      },
+      {
+        id: "delete",
+        title: strings.delete(),
+        icon: "delete",
+        onPress: deleteTrashItem
+      }
+    );
+  }
+
+  if (item.type === "tag" || item.type === "notebook") {
+    actions.push(
+      {
+        id: "add-shortcut",
+        title: isPinnedToMenu
+          ? strings.removeShortcut()
+          : strings.addShortcut(),
+        icon: isPinnedToMenu ? "link-variant-remove" : "link-variant",
+        onPress: createMenuShortcut,
+        isToggle: true,
+        checked: isPinnedToMenu,
+        activeColor: colors.error.paragraph
+      },
+      {
+        id: "default-tag",
+        title:
+          defaultTag === item.id
+            ? strings.removeAsDefault()
+            : strings.setAsDefault(),
+        hidden: item.type !== "tag",
+        icon: "pound",
+        onPress: async () => {
+          if (defaultTag === item.id) {
+            await db.settings.setDefaultTag(undefined);
+            setDefaultTag(undefined);
+          } else {
+
+            await db.settings.setDefaultTag(item.id);
+            setDefaultTag(item.id);
+          }
+          close();
+        },
+        checked: defaultTag === item.id,
+        locked: !features?.defaultNotebookAndTag.isAllowed
+      }
+    );
+  }
+
+  if (item.type === "notebook") {
+    actions.push(
+      {
+        id: "add-notebook",
+        title: strings.addNotebook(),
+        icon: "plus",
+        onPress: async () => {
+          close();
+          await sleep(300);
+          AddNotebookSheet.present(undefined, item);
+        },
+        locked: !features?.notebooks.isAllowed
+      },
+      {
+        id: "edit-notebook",
+        title: strings.editNotebook(),
+        icon: "square-edit-outline",
+        onPress: async () => {
+          close();
+          await sleep(300);
+          AddNotebookSheet.present(item);
+        }
+      },
+      {
+        id: "default-notebook",
+        title:
+          defaultNotebook === item.id
+            ? strings.removeAsDefault()
+            : strings.setAsDefault(),
+        hidden: item.type !== "notebook",
+        icon: "notebook",
+        onPress: async () => {
+          if (defaultNotebook === item.id) {
+            await db.settings.setDefaultNotebook(undefined);
+            setDefaultNotebook(undefined);
+          } else {
+
+            const notebook = {
+              id: item.id
+            };
+            await db.settings.setDefaultNotebook(notebook.id);
+            setDefaultNotebook(notebook.id);
+          }
+          close();
+        },
+        checked: defaultNotebook === item.id,
+
+        locked: !features?.defaultNotebookAndTag.isAllowed
+      },
+      {
+        id: "move-notes",
+        title: strings.addNotes(),
+        hidden: item.type !== "notebook",
+        icon: "text",
+        onPress: () => {
+          close();
+          Navigation.navigate("MoveNotes", {
+            notebook: item
+          });
+        }
+      },
+      {
+        id: "move-notebook",
+        title: strings.moveNotebookFix(),
+        icon: "arrow-right-bold-box-outline",
+        onPress: () => {
+          close();
+          Navigation.navigate("MoveNotebook", {
+            selectedNotebooks: [item]
+          });
+        }
+      }
+    );
+  }
+
+  if (item.type === "notebook" || item.type === "note") {
+    actions.push({
+      id: "pin",
+      title: item.pinned ? strings.unpin() : strings.pin(),
+      icon: item.pinned ? "pin-off-outline" : "pin-outline",
+      onPress: pinItem,
+      isToggle: true,
+      checked: item.pinned,
+      pro: true
+    });
+  }
+
+  if (
+    item.type === "notebook" ||
+    item.type === "tag" ||
+    item.type === "color"
+  ) {
+    actions.push({
+      id: "default-homepage",
+      title: isHomepage ? strings.unsetAsHomepage() : strings.setAsHomepage(),
+      icon: "home-outline",
+      isToggle: true,
+      checked: isHomepage,
+      onPress: async () => {
+
+        SettingsService.setProperty(
+          "homepageV2",
+          isHomepage
+            ? undefined
+            : {
+                id: item.id,
+                type: item.type
+              }
+        );
+      }
+    });
+  }
+
+  if (item.type === "note") {
+    async function openHistory() {
+      presentSheet({
+        component: (ref) => <NoteHistory fwdRef={ref} note={item as Note} />
+      });
+    }
+
+    async function showAttachments() {
+      AttachmentDialog.present(item as Note);
+    }
+
+    async function exportNote() {
+      if (item.type !== "note") return;
+      ExportNotesSheet.present([item.id]);
+    }
+
+    const toggleReadyOnlyMode = async () => {
+      const currentReadOnly = (item as Note).readonly;
+      await db.notes.readonly(!currentReadOnly, item?.id);
+      useTabStore.getState().forEachNoteTab(item.id, (tab) => {
+        useTabStore.getState().updateTab(tab.id, {
+          session: {
+            readonly: !currentReadOnly
+          }
+        });
+      });
+      setItem((await db.notes.note(item.id)) as Item);
+      Navigation.queueRoutesForUpdate();
+    };
+
+    const duplicateNote = async () => {
+      await db.notes.duplicate(item.id);
+      Navigation.queueRoutesForUpdate();
+      ToastManager.show({
+        heading: strings.noteDuplicated(),
+        type: "success",
+        context: "local"
+      });
+      await sleep(500);
+      close();
+    };
+
+    async function removeNoteFromNotebook() {
+      const { currentRoute, focusedRouteId } = useNavigationStore.getState();
+      if (currentRoute !== "Notebook" || !focusedRouteId) return;
+
+      await db.relations.unlink({ type: "notebook", id: focusedRouteId }, item);
+      Navigation.queueRoutesForUpdate();
+      close();
+    }
+
+    function addTo() {
+      Navigation.navigate("LinkNotebooks", {
+        noteIds: [item.id]
+      });
+      close();
+      //MoveNoteSheet.present(item as Note);
+    }
+
+    async function addToFavorites() {
+      if (!item.id || item.type !== "note") return;
+      await db.notes.favorite(!item.favorite, item.id);
+      setItem((await db.notes.note(item.id)) as Item);
+      Navigation.queueRoutesForUpdate();
+    }
+
+    async function pinToNotifications() {
+
+      if (notifPinned) {
+        await Notifications.remove(item.id);
+        await sleep(500);
+        await Notifications.get();
+        setNotifPinned(isNotePinnedInNotifications(item));
+        return;
+      }
+      if (locked) {
+        ToastManager.show({
+          heading: strings.lockedNotesPinnedFailed(),
+          type: "error",
+          context: "local"
+        });
+        return;
+      }
+
+      await Notifications.pinNote(item.id);
+      await sleep(500);
+      await Notifications.get();
+      setNotifPinned(isNotePinnedInNotifications(item));
+    }
+
+    async function shareNote() {
+      try {
+        if (item.type !== "note") return;
+        if (processingId.current === "shareNote") {
+          ToastManager.show({
+            heading: strings.pleaseWait() + "...",
+            context: "local"
+          });
+          return;
+        }
+        if (locked) {
+          close();
+          await sleep(300);
+          openVault({
+            requestType: VaultRequestType.ShareNote,
+            item: item,
+            title: strings.shareNote(),
+            buttonTitle: strings.share()
+          });
+        } else {
+          processingId.current = "shareNote";
+          const convertedText = await convertNoteToText(item);
+          processingId.current = undefined;
+          Share.open({
+            title: strings.shareNote(),
+            failOnCancel: false,
+            message: convertedText || ""
+          });
+        }
+      } catch (e) {
+        ToastManager.error(e as Error);
+        DatabaseLogger.error(e);
+        processingId.current = undefined;
+      }
+    }
+
+    async function addToVault() {
+      if (item.type !== "note") return;
+      if (locked) {
+        close();
+        await sleep(300);
+        openVault({
+          requestType: VaultRequestType.PermanentUnlock,
+          item: item,
+          title: strings.unlockNote(),
+          buttonTitle: strings.unlock()
+        });
+        return;
+      }
+      try {
+        await db.vault.add(item.id);
+        const locked = await db.vaults.itemExists(item);
+        if (locked) {
+          close();
+          Navigation.queueRoutesForUpdate();
+          eSendEvent(eUpdateNoteInEditor, item, true);
+        }
+      } catch (e: unknown) {
+        close();
+        await sleep(300);
+        switch ((e as Error).message) {
+          case VAULT_ERRORS.noVault:
+            openVault({
+              requestType: VaultRequestType.CreateVault,
+              item: item,
+              title: strings.createVault(),
+              buttonTitle: strings.lock()
+            });
+            break;
+          case VAULT_ERRORS.vaultLocked:
+            openVault({
+              requestType: VaultRequestType.LockNote,
+              item: item,
+              title: strings.lockNote(),
+              buttonTitle: strings.lock()
+            });
+            break;
+        }
+      }
+    }
+
+    async function copyContent() {
+      try {
+        if (processingId.current === "copyContent") {
+          ToastManager.show({
+            heading: strings.pleaseWait() + "...",
+            context: "local"
+          });
+          return;
+        }
+
+        if (locked) {
+          close();
+          await sleep(300);
+          openVault({
+            requestType: VaultRequestType.CopyNote,
+            item: item as Note,
+            title: strings.copyNote(),
+            buttonTitle: strings.copy()
+          });
+        } else {
+          processingId.current = "copyContent";
+          const text = await convertNoteToText(item as Note, true);
+          Clipboard.setString(text || "");
+          processingId.current = undefined;
+          ToastManager.show({
+            heading: strings.noteCopied(),
+            type: "success",
+            context: "local"
+          });
+        }
+      } catch (e) {
+        processingId.current = undefined;
+        DatabaseLogger.error(e);
+        ToastManager.error(e as Error);
+      }
+    }
+
+    actions.push(
+      {
+        id: "favorite",
+        title: !item.favorite ? strings.favorite() : strings.unfavorite(),
+        icon: item.favorite ? "star-off" : "star-outline",
+        onPress: addToFavorites,
+        isToggle: true,
+        checked: item.favorite,
+        pro: true,
+        activeColor: "orange"
+      },
+      {
+        id: "spell-check",
+        title: strings.spellCheck(),
+        icon: "spellcheck",
+        isToggle: true,
+        checked: item.spellcheck,
+        onPress: async () => {
+          db.notes.spellcheck(!item.spellcheck, item.id);
+          const note = await db.notes.note(item.id);
+          if (note) {
+            setItem(note);
+            const tabs = useTabStore.getState().getTabsForNote(note.id);
+            tabs.forEach((tab) => {
+              useTabStore.getState().updateTab(tab.id, {
+                session: {
+                  spellCheckDisabled: !note.spellcheck
+                }
+              });
+            });
+          }
+        }
+      },
+      {
+        id: "remove-from-notebook",
+        title: strings.removeFromNotebook(),
+        hidden: noteInCurrentNotebook,
+        icon: "minus-circle-outline",
+        onPress: removeNoteFromNotebook
+      },
+      {
+        id: "attachments",
+        title: strings.attachedFiles(),
+        icon: "attachment",
+        onPress: showAttachments
+      },
+      {
+        id: "history",
+        title: strings.history(),
+        icon: "history",
+        onPress: openHistory
+      },
+      {
+        id: "reminders",
+        title: strings.dataTypesPluralCamelCase.reminder(),
+        icon: "clock-outline",
+        onPress: async () => {
+          close();
+          RelationsList.present({
+            item,
+            referenceType: "reminder",
+            relationType: "from",
+            title: strings.dataTypesPluralCamelCase.reminder(),
+            onAdd: async () => {
+              AddReminder.present(undefined, item);
+              close();
+            }
+          });
+        },
+        locked: !features?.activeReminders.isAllowed
+      },
+
+      {
+        id: "copy",
+        title: strings.copy(),
+        icon: "content-copy",
+        onPress: copyContent
+      },
+      {
+        id: "share",
+        title: strings.share(),
+        icon: "share-variant",
+        onPress: shareNote
+      },
+      {
+        id: "read-only",
+        title: strings.readOnly(),
+        icon: "pencil-lock",
+        onPress: toggleReadyOnlyMode,
+        checked: item.readonly
+      },
+      {
+        id: "duplicate",
+        title: strings.duplicate(),
+        icon: "content-duplicate",
+        onPress: duplicateNote
+      },
+
+      {
+        id: "add-reminder",
+        title: strings.remindMe(),
+        icon: "clock-plus-outline",
+        onPress: async () => {
+          close();
+          await sleep(100);
+          AddReminder.present(undefined, item);
+        }
+      },
+      {
+        id: "lock-unlock",
+        title: locked ? strings.unlock() : strings.lock(),
+        icon: locked ? "lock-open-outline" : "key-outline",
+        onPress: addToVault,
+        checked: locked
+      },
+      {
+        id: "export",
+        title: strings.export(),
+        icon: "export",
+        onPress: exportNote
+      },
+
+      {
+        id: "notebooks",
+        title: strings.addToNotebook(),
+        icon: "book-outline",
+        onPress: addTo
+      },
+      {
+        id: "add-tag",
+        title: strings.addTags(),
+        icon: "pound",
+        onPress: addTo
+      },
+      {
+        id: "references",
+        title: strings.references(),
+        icon: "vector-link",
+        onPress: () => {
+          ReferencesList.present({
+            reference: item as ItemReference
+          });
+        }
+      },
+      {
+        id: "archive",
+        title: !item.archived ? strings.archive() : strings.unarchive(),
+        icon: "archive",
+        onPress: async () => {
+          db.notes.archive(!item.archived, item.id);
+          setItem((await db.notes.note(item.id)) as Item);
+          Navigation.queueRoutesForUpdate();
+          useArchivedStore.getState().refresh();
+        },
+        checked: item.archived,
+        isToggle: true
+      },
+      {
+        id: "expiry-date",
+        title: item.expiryDate?.value
+          ? strings.unsetExpiry()
+          : strings.setExpiry(),
+        icon: item.expiryDate?.value ? "bomb-off" : "bomb",
+        locked: !features?.expiringNotes?.isAllowed,
+        onPress: async () => {
+          if (item.expiryDate?.value) {
+            await db.notes.setExpiryDate(null, item.id);
+            Navigation.queueRoutesForUpdate();
+            eSendEvent(eMenuItemUpdate);
+            ToastManager.show({
+              message: strings.expiryDateRemoved(),
+              type: "success",
+              context: "local"
+            });
+
+            setItem((await db.notes.note(item.id)) as Item);
+          } else {
+
+            presentDialog({
+              context: "properties",
+              component: (close) => (
+                <DatePickerComponent
+                  onCancel={() => close?.()}
+                  onConfirm={async (date) => {
+                    close?.();
+                    await db.notes.setExpiryDate(date.getTime(), item.id);
+                    Navigation.queueRoutesForUpdate();
+                    eSendEvent(eMenuItemUpdate);
+                    ToastManager.show({
+                      message: strings.expiryDateSet(),
+                      type: "success",
+                      context: "local"
+                    });
+
+                    setItem((await db.notes.note(item.id)) as Item);
+                  }}
+                />
+              )
+            });
+          }
+        }
+      }
+    );
+
+    if (Platform.OS === "android") {
+      actions.push({
+        id: "pin-to-notifications",
+        title: notifPinned
+          ? strings.unpinFromNotifications()
+          : strings.pinToNotifications(),
+        icon: "message-badge-outline",
+        checked: !!notifPinned,
+        onPress: pinToNotifications,
+        locked: !features?.pinNoteInNotification.isAllowed
+      });
+    }
+  }
+
+  if (item.type != "trash") {
+    actions.push({
+      id: "trash",
+      title:
+        item.type !== "notebook" && item.type !== "note"
+          ? strings.doActions.delete.unknown(item.type, 1)
+          : strings.moveToTrash(),
+      icon: "delete-outline",
+      type: "error",
+      onPress: deleteItem
+    });
+  }
+
+  if (
+    Platform.OS === "android" &&
+    (item.type === "tag" ||
+      item.type === "note" ||
+      item.type === "notebook" ||
+      item.type === "color")
+  ) {
+    actions.push({
+      id: "launcher-shortcut",
+      title: strings.addToHome(),
+      icon: "cellphone-arrow-down",
+      locked: !features?.androidLauncherShortcuts.isAllowed,
+      onPress: async () => {
+
+        try {
+          await SunshineModule.addShortcut(
+            item.id,
+            item.type,
+            item.title,
+            (item as Note).headline || (item as Notebook).description || "",
+            (item as Color).colorCode
+          );
+        } catch (e) {
+          /**
+          empty */
+        }
+      }
+    });
+  }
+
+  if (
+    item.type === "tag" ||
+    item.type === "note" ||
+    item.type === "notebook" ||
+    item.type === "color"
+  ) {
+    actions.push({
+      id: "copy-link",
+      title: strings.copyLink(),
+      icon: "link",
+      onPress: () => {
+        const link = createInternalLink(item.type, item.id);
+        Clipboard.setHTML(`<a href="${link}" >${item.title}</a>`, link);
+        ToastManager.show({
+          heading: strings.linkCopied(),
+          message: link,
+          context: "local",
+          type: "success"
+        });
+      }
+    });
+  }
+
+  if (item.type === "notebook" || item.type === "tag") {
+    actions.push({
+      id: "copy-id",
+      title: strings.copyId(),
+      icon: "identifier",
+      onPress: () => {
+        Clipboard.setString(item.id);
+        ToastManager.show({
+          heading: strings.idCopied(),
+          message: item.id,
+          context: "local",
+          type: "success"
+        });
+      }
+    });
+  }
+
+  return actions;
+};

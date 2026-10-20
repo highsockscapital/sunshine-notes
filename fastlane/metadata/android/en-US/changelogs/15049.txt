@@ -1,0 +1,7 @@
+- Now you can set title of note when sharing to Notesnook
+- Fix back navigation from editor closes the app
+- Fix errors during migration
+- Fix sharing to Notesnook not working for some apps
+- Numerous other bug fixes and performance improvements
+
+Thank you for using Notesnook!

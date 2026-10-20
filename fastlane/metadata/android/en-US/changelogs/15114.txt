@@ -1,0 +1,7 @@
+- Added full offline mode to enable downloading attachments on sync
+- Now you can change sync server endpoints in settings to use your own self hosted sync
+- Now you can take backups with attachments included
+- Removed all kinds of telemetry and analytics
+- Bug fixes and small improvements
+
+Thank you for using Notesnook!

@@ -1,0 +1,243 @@
+/*
+This file is part of the Notesnook project (https://notesnook.com/)
+
+Copyright (C) 2023 Streetwriters (Private) Limited
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+import { Dimensions, PlatformOSType } from "react-native";
+import { Sound } from "react-native-notification-sounds";
+import { initialWindowMetrics } from "react-native-safe-area-context";
+import { FileType } from "react-native-scoped-storage";
+import { create } from "zustand";
+import { ThemeDark, ThemeLight, ThemeDefinition } from "@notesnook/theme";
+import { DayFormat, WeekFormat, Reminder } from "@notesnook/core";
+import { db } from "../common/database";
+import { EDITOR_LINE_HEIGHT } from "../utils/constants";
+import { ShortcutItem } from "react-native-actions-shortcuts";
+export type Settings = {
+  showToolbarOnTop?: boolean;
+  showKeyboardOnOpen?: boolean;
+  fontScale?: number;
+  forcePortraitOnTablet?: boolean;
+  useSystemTheme?: boolean;
+  reminder: "daily" | "off" | "useroff" | "weekly" | "monthly";
+  fullBackupReminder: "never" | "weekly" | "monthly";
+  encryptedBackup?: boolean;
+  homepage?: string;
+  homepageV2?: {
+    id: string;
+    type: "notebook" | "tag" | "color" | "default";
+  };
+  sort?: string;
+  sortOrder?: string;
+  screenshotMode?: boolean;
+  privacyScreen?: boolean;
+  appLockTimer: number;
+  appLockEnabled?: boolean;
+  appLockMode?: "none" | "background" | "launch";
+  notebooksListMode?: "normal" | "compact";
+  notesListMode?: "normal" | "compact";
+  searchListMode?: "normal" | "compact";
+  devMode?: boolean;
+  notifNotes?: boolean;
+  pitchBlack?: boolean;
+  reduceAnimations?: boolean;
+  migrated?: boolean;
+  nextBackupRequestTime?: number;
+  lastBackupDate?: number;
+  backupDirectoryAndroid?: FileType | null;
+  showBackupCompleteSheet: boolean;
+  version: string | null;
+  doubleSpacedLines?: boolean;
+  reminderNotifications?: boolean;
+  defaultSnoozeTime?: string;
+  reminderNotificationMode: Reminder["priority"];
+  corsProxy: string;
+  notificationSound?: Sound & { platform: PlatformOSType };
+  defaultFontSize: number;
+  defaultFontFamily: string;
+  colorScheme: "dark" | "light";
+  lighTheme: ThemeDefinition;
+  darkTheme: ThemeDefinition;
+  markdownShortcuts?: boolean;
+  appLockHasPasswordSecurity?: boolean;
+  biometricsAuthEnabled?: boolean;
+  applockKeyboardType: "numeric" | "default";
+  settingsVersion?: number;
+  backupType: "full" | "partial";
+  offlineMode?: boolean;
+  lastFullBackupDate?: number;
+  defaultSidebarTab: number;
+  checkForUpdates?: boolean;
+  defaultLineHeight: number;
+  imageCompression: "ask-every-time" | "enabled" | "disabled";
+  keepScreenOn?: boolean;
+};
+
+type DimensionsType = {
+  width: number;
+  height: number;
+};
+
+type Insets = {
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+};
+
+export interface SettingStore {
+  settings: Settings;
+  fullscreen: boolean;
+  deviceMode: string | null;
+  dimensions: DimensionsType;
+  setSettings: (settings: Settings) => void;
+  setFullscreen: (fullscreen: boolean) => void;
+  setDeviceMode: (mode: string | null) => void;
+  setDimensions: (dimensions: DimensionsType) => void;
+  isAppLoading: boolean;
+  setAppLoading: (isAppLoading: boolean) => void;
+  setSheetKeyboardHandler: (sheetKeyboardHandler: boolean) => void;
+  sheetKeyboardHandler: boolean;
+  requestBiometrics: boolean;
+  setRequestBiometrics: (requestBiometrics: boolean) => void;
+  appDidEnterBackgroundForAction: boolean;
+  setAppDidEnterBackgroundForAction: (value: boolean) => void;
+  insets: Insets;
+  setInsets: (insets: Insets) => void;
+  timeFormat: string;
+  dateFormat: string;
+  dayFormat: DayFormat;
+  weekFormat: WeekFormat;
+  vaultLockAfter: number;
+  dbPassword?: string;
+  isOldAppLock: () => boolean;
+  initialUrl: string | null;
+  refresh: () => void;
+  pendingShortcut: ShortcutItem | null;
+}
+
+const { width, height } = Dimensions.get("window");
+
+export const defaultSettings: SettingStore["settings"] = {
+  applockKeyboardType: "numeric",
+  appLockTimer: 0,
+  showToolbarOnTop: false,
+  appLockEnabled: false,
+  backupDirectoryAndroid: null,
+  offlineMode: false,
+  showKeyboardOnOpen: false,
+  fontScale: 1,
+  forcePortraitOnTablet: false,
+  useSystemTheme: true,
+  reminder: "off",
+  defaultSidebarTab: 0,
+  encryptedBackup: false,
+  homepage: "Notes",
+  sort: "default",
+  sortOrder: "desc",
+  screenshotMode: true,
+  privacyScreen: false,
+  appLockMode: "none",
+  notebooksListMode: "normal",
+  notesListMode: "normal",
+  searchListMode: "normal",
+  devMode: false,
+  notifNotes: false,
+  pitchBlack: false,
+  reduceAnimations: false,
+  migrated: false,
+  nextBackupRequestTime: undefined,
+  lastBackupDate: 0,
+  showBackupCompleteSheet: true,
+  version: null,
+  doubleSpacedLines: true,
+  reminderNotifications: true,
+  defaultSnoozeTime: "5",
+  // No proxy by default: this build does not talk to any server owned
+  // host, so remote images are fetched straight from where they live.
+  corsProxy: "",
+  reminderNotificationMode: "urgent",
+  notificationSound: undefined,
+  defaultFontFamily: "sans-serif",
+  defaultFontSize: 16,
+  colorScheme: "light",
+  lighTheme: ThemeLight,
+  darkTheme: ThemeDark,
+  markdownShortcuts: false,
+  biometricsAuthEnabled: false,
+  appLockHasPasswordSecurity: false,
+  settingsVersion: 0,
+  backupType: "partial",
+  fullBackupReminder: "never",
+  lastFullBackupDate: 0,
+  checkForUpdates: true,
+  defaultLineHeight: EDITOR_LINE_HEIGHT.DEFAULT,
+  imageCompression: "ask-every-time",
+  keepScreenOn: true
+};
+
+export const useSettingStore = create<SettingStore>((set, get) => ({
+  dbPassword: undefined,
+  settings: { ...defaultSettings },
+  sheetKeyboardHandler: true,
+  fullscreen: false,
+  deviceMode: null,
+  dimensions: { width, height },
+  isAppLoading: true,
+  setSettings: (settings) => set({ settings }),
+  setFullscreen: (fullscreen) => set({ fullscreen }),
+  setDeviceMode: (mode) => set({ deviceMode: mode }),
+  setDimensions: (dimensions) => set({ dimensions: dimensions }),
+  setAppLoading: (isAppLoading) => set({ isAppLoading }),
+  setSheetKeyboardHandler: (sheetKeyboardHandler) =>
+    set({ sheetKeyboardHandler }),
+  requestBiometrics: false,
+  setRequestBiometrics: (requestBiometrics) => set({ requestBiometrics }),
+  setInsets: (insets) => set({ insets }),
+  timeFormat: "12-hour",
+  dateFormat: "DD-MM-YYYY",
+  dayFormat: "short",
+  weekFormat: "Sun",
+  vaultLockAfter: 1000 * 60 * 30,
+  setAppDidEnterBackgroundForAction: (value: boolean) => {
+    set({
+      appDidEnterBackgroundForAction: value
+    });
+  },
+  appDidEnterBackgroundForAction: false,
+  isOldAppLock: () => {
+    return (
+      get().settings.appLockHasPasswordSecurity === undefined &&
+      get().settings.biometricsAuthEnabled === undefined &&
+      get().settings.appLockMode !== "none"
+    );
+  },
+  insets: initialWindowMetrics?.insets
+    ? initialWindowMetrics.insets
+    : { top: 0, right: 0, left: 0, bottom: 0 },
+  initialUrl: null,
+  refresh: async () => {
+    set({
+      dayFormat: db.settings.getDayFormat(),
+      timeFormat: db.settings.getTimeFormat(),
+      dateFormat: db.settings?.getDateFormat(),
+      weekFormat: db.settings.getWeekFormat(),
+      vaultLockAfter: db.settings.getVaultLockAfter()
+    });
+  },
+  pendingShortcut: null
+}));

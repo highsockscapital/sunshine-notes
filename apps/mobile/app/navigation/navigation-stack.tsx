@@ -1,0 +1,450 @@
+/*
+This file is part of the Notesnook project (https://notesnook.com/)
+
+Copyright (C) 2023 Streetwriters (Private) Limited
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+import { useThemeColors } from "@notesnook/theme";
+import { NavigationContainer } from "@react-navigation/native";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import * as React from "react";
+import { hideAllTooltips } from "../hooks/use-tooltip";
+import SettingsService from "../services/settings";
+import useNavigationStore, { RouteParams } from "../stores/use-navigation-store";
+import { useSelectionStore } from "../stores/use-selection-store";
+import { useSettingStore } from "../stores/use-setting-store";
+import { fluidTabsRef, rootNavigatorRef } from "../utils/global-refs";
+import Navigation from "../services/navigation";
+import { isFeatureAvailable, useIsFeatureAvailable } from "@notesnook/common";
+import { isInternalLink, parseInternalLink } from "@notesnook/core";
+import { eSendEvent } from "../services/event-manager";
+import { editorState } from "../screens/editor/tiptap/utils";
+import { eOnLoadNote } from "../utils/events";
+
+import { launchNewNoteTab } from "../hooks/use-shortcut-manager";
+
+const RootStack = createNativeStackNavigator();
+const AppStack = createNativeStackNavigator();
+const DEFAULT_HOME: {
+  name: string;
+  params: any;
+} = {
+  name: "Notes",
+  params: undefined
+};
+
+let Notes: any = null;
+let Notebook: any = null;
+let Search: any = null;
+let Favorites: any = null;
+let Trash: any = null;
+let Reminders: any = null;
+let TaggedNotes: any = null;
+let ColoredNotes: any = null;
+let Archive: any = null;
+const AppNavigation = React.memo(
+  () => {
+    const { colors } = useThemeColors();
+    const homepageV2 = useSettingStore((state) => state.settings.homepageV2);
+    const loading = useSettingStore((state) => state.isAppLoading);
+    const [home, setHome] = React.useState<
+      { name: string; params: any } | undefined
+    >(undefined);
+
+    React.useEffect(() => {
+      if (!home) {
+        const url = useSettingStore.getState().initialUrl;
+        if (url) {
+          const parsedLink = isInternalLink(url)
+            ? parseInternalLink(url)
+            : undefined;
+
+          if (
+            parsedLink?.type === "notebook" ||
+            url?.startsWith("https://app.sunshinenotes.com/open_notebook?")
+          ) {
+            const id = parsedLink?.id || new URL(url).searchParams.get("id");
+            if (id) {
+              setHome({
+                name: "Notebook",
+                params: {
+                  id: id
+                }
+              });
+              return;
+            }
+          } else if (
+            parsedLink?.type === "tag" ||
+            url?.startsWith("https://app.sunshinenotes.com/open_tag?")
+          ) {
+            const id = parsedLink?.id || new URL(url).searchParams.get("id");
+            if (id) {
+              setHome({
+                name: "TaggedNotes",
+                params: {
+                  type: "tag",
+                  id: id
+                }
+              });
+              return;
+            }
+          } else if (
+            parsedLink?.type === "color" ||
+            url?.startsWith("https://app.sunshinenotes.com/open_color?")
+          ) {
+            const id = parsedLink?.id || new URL(url).searchParams.get("id");
+            if (id) {
+              setHome({
+                name: "ColoredNotes",
+                params: {
+                  type: "color",
+                  id: id
+                }
+              });
+              return;
+            }
+          }
+        }
+
+        if (homepageV2) {
+          switch (homepageV2.type) {
+            case "notebook": {
+              setHome({
+                name: "Notebook",
+                params: {
+                  id: homepageV2.id
+                }
+              });
+              return;
+            }
+            case "color": {
+              setHome({
+                name: "ColoredNotes",
+                params: {
+                  type: "color",
+                  id: homepageV2.id
+                }
+              });
+              return;
+            }
+            case "tag": {
+              setHome({
+                name: "TaggedNotes",
+                params: {
+                  type: "tag",
+                  id: homepageV2.id
+                }
+              });
+              return;
+            }
+            case "default":
+              setHome({
+                name: homepageV2.id,
+                params: undefined
+              });
+              return;
+          }
+        } else {
+          setHome(DEFAULT_HOME);
+        }
+      }
+    }, []);
+
+    React.useEffect(() => {
+      if (!homepageV2 || loading) return;
+      isFeatureAvailable("customHomepage").then((value) => {
+        if (!value.isAllowed) {
+          SettingsService.setProperty("homepageV2", undefined);
+        }
+      });
+    }, [homepageV2, loading]);
+
+    React.useEffect(() => {
+      if (!home) return;
+      useNavigationStore.getState().update(home?.name as keyof RouteParams);
+      useNavigationStore
+        .getState()
+        .setFocusedRouteId(home?.params?.id || home?.name);
+    }, [home]);
+
+    return !home ? null : (
+      <AppStack.Navigator
+        initialRouteName={home?.name}
+        screenOptions={{
+          headerShown: false,
+          animation: "none",
+          contentStyle: {
+            backgroundColor: colors.primary.background
+          }
+        }}
+      >
+        <AppStack.Screen
+          name="Notes"
+          getComponent={() => {
+            Notes = Notes || require("../screens/home").default;
+            return Notes;
+          }}
+        />
+
+        <AppStack.Screen
+          name="Favorites"
+          getComponent={() => {
+            Favorites = Favorites || require("../screens/favorites").default;
+            return Favorites;
+          }}
+        />
+
+        <AppStack.Screen
+          name="Trash"
+          getComponent={() => {
+            Trash = Trash || require("../screens/trash").default;
+            return Trash;
+          }}
+        />
+
+        <AppStack.Screen
+          name="TaggedNotes"
+          getComponent={() => {
+            TaggedNotes =
+              TaggedNotes || require("../screens/notes/tagged").default;
+            return TaggedNotes;
+          }}
+          initialParams={
+            home?.name === "TaggedNotes" ? home?.params : undefined
+          }
+        />
+
+        <AppStack.Screen
+          name="ColoredNotes"
+          getComponent={() => {
+            ColoredNotes =
+              ColoredNotes || require("../screens/notes/colored").default;
+            return ColoredNotes;
+          }}
+          initialParams={
+            home?.name === "ColoredNotes" ? home?.params : undefined
+          }
+        />
+
+        <AppStack.Screen
+          name="Archive"
+          getComponent={() => {
+            Archive = Archive || require("../screens/archive").default;
+            return Archive;
+          }}
+        />
+
+        <AppStack.Screen
+          name="Reminders"
+          getComponent={() => {
+            Reminders = Reminders || require("../screens/reminders").default;
+            return Reminders;
+          }}
+        />
+
+        <AppStack.Screen
+          name="Notebook"
+          getComponent={() => {
+            Notebook = Notebook || require("../screens/notebook").default;
+            return Notebook;
+          }}
+          initialParams={home?.name === "Notebook" ? home?.params : undefined}
+        />
+
+        <AppStack.Screen
+          name="Search"
+          getComponent={() => {
+            Search = Search || require("../screens/search").default;
+            return Search;
+          }}
+        />
+      </AppStack.Navigator>
+    );
+  },
+  () => true
+);
+AppNavigation.displayName = "AppNavigation";
+
+let FluidPanelsView: any = null;
+let LinkNotebooks: any = null;
+let MoveNotebook: any = null;
+let MoveNotes: any = null;
+let Settings: any = null;
+let ManageTags: any = null;
+let AddReminder: any = null;
+let RelationsList: any = null;
+let Wrapped: any = null;
+export const RootNavigation = () => {
+  const initialShortcut = React.useRef(
+    useSettingStore.getState().pendingShortcut
+  ).current;
+
+  const reminderFeature = useIsFeatureAvailable("activeReminders");
+  const clearSelection = useSelectionStore((state) => state.clearSelection);
+  const resetTimer = React.useRef<NodeJS.Timeout>(undefined);
+
+  const onStateChange = React.useCallback(
+    (state: any) => {
+      if (useSelectionStore.getState().selectionMode) {
+        clearSelection();
+      }
+      clearTimeout(resetTimer.current);
+      resetTimer.current = setTimeout(() => {
+        Navigation.resetRootState(state);
+      }, 1000);
+      hideAllTooltips();
+    },
+    [clearSelection]
+  );
+
+  React.useEffect(() => {
+    const unsubscribe = useSettingStore.subscribe((state, prevState) => {
+      const pendingShortcut = state.pendingShortcut;
+
+      if (pendingShortcut === prevState.pendingShortcut || !pendingShortcut) {
+        return;
+      }
+
+      if (pendingShortcut.type === "sunshinenotes.action.newreminder") {
+        if (reminderFeature === undefined) return;
+
+        rootNavigatorRef.current?.navigate("AddReminder" as any);
+      } else if (pendingShortcut.type === "sunshinenotes.action.newnote") {
+        if (fluidTabsRef.current) {
+          rootNavigatorRef.current?.navigate("FluidPanelsView" as any);
+          eSendEvent(eOnLoadNote, { newNote: true });
+          editorState().movedAway = false;
+          fluidTabsRef.current.goToPage("editor", true);
+        } else {
+          launchNewNoteTab();
+
+          rootNavigatorRef.current?.navigate("FluidPanelsView" as any, {
+            initialPage: "editor"
+          });
+        }
+      }
+    });
+
+    return unsubscribe;
+  }, [reminderFeature]);
+
+  const initialRouteName =
+    initialShortcut?.type === "sunshinenotes.action.newreminder"
+      ? "AddReminder"
+      : "FluidPanelsView";
+
+  return (
+    <NavigationContainer onStateChange={onStateChange} ref={rootNavigatorRef}>
+      <RootStack.Navigator
+        screenOptions={{
+          headerShown: false
+        }}
+        initialRouteName={initialRouteName}
+      >
+        <RootStack.Screen
+          name="FluidPanelsView"
+          getComponent={() => {
+            FluidPanelsView =
+              FluidPanelsView ||
+              require("../navigation/fluid-panels-view").default;
+            return FluidPanelsView;
+          }}
+          initialParams={{
+            initialPage:
+              initialShortcut?.type === "sunshinenotes.action.newnote"
+                ? "editor"
+                : undefined
+          }}
+        />
+
+        <RootStack.Screen
+          name="LinkNotebooks"
+          getComponent={() => {
+            LinkNotebooks =
+              LinkNotebooks || require("../screens/link-notebooks").default;
+            return LinkNotebooks;
+          }}
+        />
+
+        <RootStack.Screen
+          name="MoveNotebook"
+          getComponent={() => {
+            MoveNotebook =
+              MoveNotebook || require("../screens/move-notebook").default;
+            return MoveNotebook;
+          }}
+        />
+
+        <RootStack.Screen
+          name="MoveNotes"
+          getComponent={() => {
+            MoveNotes = MoveNotes || require("../screens/move-notes").default;
+            return MoveNotes;
+          }}
+        />
+
+        <RootStack.Screen
+          name="Settings"
+          getComponent={() => {
+            Settings = Settings || require("../screens/settings").default;
+            return Settings;
+          }}
+        />
+
+        <RootStack.Screen
+          name="ManageTags"
+          getComponent={() => {
+            ManageTags =
+              ManageTags || require("../screens/manage-tags").default;
+            return ManageTags;
+          }}
+        />
+
+        <RootStack.Screen
+          name="AddReminder"
+          getComponent={() => {
+            AddReminder =
+              AddReminder || require("../screens/add-reminder").default;
+            return AddReminder;
+          }}
+        />
+
+        <RootStack.Screen
+          name="RelationsList"
+          getComponent={() => {
+            RelationsList =
+              RelationsList || require("../screens/relations-list").default;
+            return RelationsList;
+          }}
+        />
+        <RootStack.Screen
+          name="Wrapped"
+          getComponent={() => {
+            Wrapped = Wrapped || require("../screens/wrapped").default;
+            return Wrapped;
+          }}
+        />
+      </RootStack.Navigator>
+    </NavigationContainer>
+  );
+};
+
+export const AppNavigationStack = React.memo(
+  () => {
+    return <AppNavigation />;
+  },
+  () => true
+);
+AppNavigationStack.displayName = "AppNavigationStack";

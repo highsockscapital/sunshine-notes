@@ -1,0 +1,502 @@
+package com.sunshine.notes;
+
+import android.app.Activity;
+import android.appwidget.AppWidgetManager;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.ShortcutInfo;
+import android.content.pm.ShortcutManager;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.drawable.Icon;
+import android.os.Build;
+import android.os.Bundle;
+import android.provider.Settings;
+import android.util.Log;
+import android.view.View;
+import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.view.WindowManager;
+import android.widget.RemoteViews;
+
+import com.facebook.react.bridge.Arguments;
+import com.facebook.react.bridge.Promise;
+import com.facebook.react.bridge.ReactContext;
+import com.facebook.react.bridge.ReactContextBaseJavaModule;
+import com.facebook.react.bridge.ReactApplicationContext;
+import com.facebook.react.bridge.ReactMethod;
+import com.facebook.react.bridge.WritableArray;
+import com.facebook.react.bridge.WritableMap;
+import com.sunshine.notes.datatypes.Note;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+
+public class SunshineNativeModule extends ReactContextBaseJavaModule {
+    Intent lastIntent;
+    ReactContext mContext;
+    static String IntentType = "com.sunshine.notes.IntentType";
+
+    public SunshineNativeModule(ReactApplicationContext reactContext) {
+        super(reactContext);
+        mContext = reactContext;
+    }
+
+    @Override
+    public String getName() {
+        return "SunshineNativeModule";
+    }
+
+
+    @ReactMethod
+    public void setBackgroundColor(final String color) {
+        try {
+           getCurrentActivity().getWindow().getDecorView().setBackgroundColor(Color.parseColor(color));
+        } catch (Exception e) {
+
+        }
+    }
+
+    @ReactMethod
+    public void getActivityName(Promise promise) {
+        try {
+            promise.resolve(getCurrentActivity().getClass().getSimpleName());
+        } catch (Exception e) {
+            promise.resolve(null);
+        }
+    }
+
+    @ReactMethod
+    public void setSecureMode(final boolean mode) {
+        try {
+
+            getCurrentActivity().runOnUiThread(() -> {
+
+                try {
+                    if (mode)
+                        getCurrentActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+                    else
+                        getCurrentActivity().getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+                } catch (Exception e) {
+                }
+
+            });
+        } catch (Exception e) {
+
+        }
+    }
+
+    @ReactMethod
+    public void setImmersiveMode(final boolean enabled) {
+        try {
+            Activity activity = getCurrentActivity();
+            if (activity == null) return;
+
+            activity.runOnUiThread(() -> {
+                try {
+                    Window window = activity.getWindow();
+                    View decorView = window.getDecorView();
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        WindowInsetsController controller = window.getInsetsController();
+                        if (controller == null) return;
+
+                        if (enabled) {
+                            controller.hide(WindowInsets.Type.systemBars());
+                            controller.setSystemBarsBehavior(
+                                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                        } else {
+                            controller.show(WindowInsets.Type.systemBars());
+                            controller.setSystemBarsBehavior(
+                                    WindowInsetsController.BEHAVIOR_DEFAULT);
+                        }
+                    } else {
+                        int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+
+                        if (enabled) {
+                            flags |= View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                                    | View.SYSTEM_UI_FLAG_FULLSCREEN
+                                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
+                        }
+
+                        decorView.setSystemUiVisibility(flags);
+                    }
+                } catch (Exception e) {
+                    Log.e("SunshineNativeModule", "Failed to set immersive mode", e);
+                }
+            });
+        } catch (Exception e) {
+            Log.e("SunshineNativeModule", "Failed to set immersive mode", e);
+        }
+    }
+
+    @ReactMethod(isBlockingSynchronousMethod = true)
+    public int getWidgetId() {
+        return NotePreviewConfigureActivity.appWidgetId;
+    }
+
+    @ReactMethod
+    public void setString(final String storeName, final String key, final String value) {
+        SharedPreferences details = getReactApplicationContext().getSharedPreferences(storeName, Context.MODE_PRIVATE);
+        SharedPreferences.Editor edit = details.edit();
+        edit.putString(key, value);
+        edit.apply();
+    }
+
+    @ReactMethod
+    public void removeString(final String storeName, final String key) {
+        SharedPreferences details = getReactApplicationContext().getSharedPreferences(storeName, Context.MODE_PRIVATE);
+        SharedPreferences.Editor edit = details.edit();
+        edit.remove(key);
+        edit.apply();
+    }
+
+    @ReactMethod
+    public void getString(final String storeName, final String key, Promise promise) {
+        SharedPreferences details = getReactApplicationContext().getSharedPreferences(storeName, Context.MODE_PRIVATE);
+        String value = details.getString(key, "");
+        promise.resolve(value.isEmpty() ? null : value);
+    }
+
+    @ReactMethod
+    public void saveAndFinish() {
+        NotePreviewConfigureActivity.saveAndFinish(mContext);
+    }
+
+    @ReactMethod(isBlockingSynchronousMethod = true)
+    public WritableMap getIntent() {
+        WritableMap map = Arguments.createMap();
+        if (getCurrentActivity() != null) {
+            Intent intent = getCurrentActivity().getIntent();
+            Bundle extras = getCurrentActivity().getIntent().getExtras();
+
+            if (extras != null && intent != lastIntent) {
+                lastIntent = intent;
+                if (Objects.equals(extras.getString(IntentType), "NewReminder")) {
+                    map.putString(ReminderWidgetProvider.NewReminder, extras.getString(ReminderWidgetProvider.NewReminder));
+                } else if (Objects.equals(extras.getString(IntentType), "OpenReminder")) {
+                    map.putString(ReminderWidgetProvider.OpenReminderId, extras.getString(ReminderWidgetProvider.OpenReminderId));
+                } else if (Objects.equals(extras.getString(IntentType), "OpenNote")) {
+                    map.putString(NotePreviewWidget.OpenNoteId, extras.getString(NotePreviewWidget.OpenNoteId));
+                }
+
+            }
+        }
+        return map;
+    }
+
+    @ReactMethod
+    public void cancelAndFinish() {
+        NotePreviewConfigureActivity.activity.setResult(Activity.RESULT_CANCELED);
+        NotePreviewConfigureActivity.activity.finish();
+    }
+
+    @ReactMethod
+    public void getWidgetNotes(Promise promise) {
+        WritableArray arr = Arguments.createArray();
+        for (Note note : WidgetUtils.getWidgetNotes(getReactApplicationContext()).values()) {
+            arr.pushString(note.getId());
+        }
+        promise.resolve(arr);
+    }
+
+    @ReactMethod
+    public void hasWidgetNote(final String noteId, Promise promise) {
+        boolean found = false;
+        for (Note note : WidgetUtils.getWidgetNotes(getReactApplicationContext()).values()) {
+            if (note.getId().equals(noteId)) {
+                found = true;
+                break;
+            }
+        }
+        promise.resolve(found);
+    }
+
+    @ReactMethod
+    public void updateWidgetNote(final String noteId, final String data) {
+        SharedPreferences pref = getReactApplicationContext().getSharedPreferences(WidgetUtils.PREFERENCES, Context.MODE_PRIVATE);
+        SharedPreferences.Editor edit = pref.edit();
+        List<Integer> ids = new ArrayList<>();
+
+        // Match on the note's id, not on the raw JSON containing it somewhere: a note whose body
+        // happens to mention another note's id is not the same note.
+        for (Map.Entry<Integer, Note> entry : WidgetUtils.getWidgetNotes(getReactApplicationContext()).entrySet()) {
+            if (!noteId.equals(entry.getValue().getId())) continue;
+            edit.putString(String.valueOf(entry.getKey()), data);
+            ids.add(entry.getKey());
+        }
+        edit.apply();
+
+        for (int id : ids) {
+            NotePreviewWidget.updateAppWidget(mContext, AppWidgetManager.getInstance(mContext), id);
+        }
+    }
+
+    /**
+     * Redraws every widget from scratch. Needed because the app can be stopped while its widgets
+     * stay on the home screen: clearing app data empties the store without the widgets ever being
+     * told, so they keep showing content that is gone until something forces a redraw.
+     */
+    @ReactMethod
+    public void refreshWidgets() {
+        WidgetUtils.refreshAll(mContext);
+    }
+
+    @ReactMethod
+    public void updateReminderWidget() {
+        AppWidgetManager wm = AppWidgetManager.getInstance(mContext);
+        int[] ids = wm.getAppWidgetIds(ComponentName.createRelative(mContext.getPackageName(), ReminderWidgetProvider.class.getName()));
+        for (int id: ids) {
+            Log.d("Reminders", "Updating" + id);
+            RemoteViews views = new RemoteViews(mContext.getPackageName(), R.layout.widget_reminders);
+            // The rows are part of this update, so there is nothing left to invalidate afterwards.
+            ReminderWidgetProvider.updateAppWidget(mContext, wm, id, views);
+        }
+    }
+
+    @ReactMethod(isBlockingSynchronousMethod = true)
+    public boolean isGestureNavigationEnabled() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                String navBarMode = Settings.Secure.getString(
+                        mContext.getContentResolver(),
+                        "navigation_mode"
+                );
+                return "2".equals(navBarMode);
+            } catch (Exception e) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    @ReactMethod
+    public void addShortcut(final String id, final String type, final String title, final String description, final String color, Promise promise) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            promise.reject("UNSUPPORTED", "Pinned launcher shortcuts require Android 8.0 or higher");
+            return;
+        }
+
+        try {
+            ShortcutManager shortcutManager = mContext.getSystemService(ShortcutManager.class);
+            if (shortcutManager == null) {
+                promise.reject("ERROR", "ShortcutManager not available");
+                return;
+            }
+
+            String uri = "nn://" + type + "/" + id;
+            Intent intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(uri));
+            intent.setPackage(mContext.getPackageName());
+
+            Icon icon = createLetterIcon(type, title, color);
+            ShortcutInfo shortcut = new ShortcutInfo.Builder(mContext, id)
+                    .setShortLabel(title)
+                    .setLongLabel(description != null && !description.isEmpty() ? description : title)
+                    .setIcon(icon)
+                    .setCategories(Set.of(type))
+                    .setIntent(intent)
+                    .build();
+
+            shortcutManager.requestPinShortcut(shortcut, null);
+            promise.resolve(true);
+        } catch (Exception e) {
+            promise.reject("ERROR", e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void removeShortcut(final String id, Promise promise) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            promise.reject("UNSUPPORTED", "Pinned launcher shortcuts require Android 8.0 or higher");
+            return;
+        }
+
+        try {
+            ShortcutManager shortcutManager = mContext.getSystemService(ShortcutManager.class);
+            if (shortcutManager == null) {
+                promise.reject("ERROR", "ShortcutManager not available");
+                return;
+            }
+
+            shortcutManager.disableShortcuts(java.util.Collections.singletonList(id));
+            promise.resolve(true);
+        } catch (Exception e) {
+            promise.reject("ERROR", e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void updateShortcut(final String id, final String type, final String title, final String description,final String color, Promise promise) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            promise.reject("UNSUPPORTED", "Pinned launcher shortcuts require Android 8.0 or higher");
+            return;
+        }
+
+        try {
+            ShortcutManager shortcutManager = mContext.getSystemService(ShortcutManager.class);
+            if (shortcutManager == null) {
+                promise.reject("ERROR", "ShortcutManager not available");
+                return;
+            }
+
+            // Get existing shortcut to preserve icon and intent
+            List<ShortcutInfo> shortcuts = shortcutManager.getPinnedShortcuts();
+            ShortcutInfo existingShortcut = null;
+            for (ShortcutInfo s : shortcuts) {
+                if (s.getId().equals(id)) {
+                    existingShortcut = s;
+                    break;
+                }
+            }
+
+            if (existingShortcut == null) {
+                return;
+            }
+            Icon icon = createLetterIcon(type, title, color);
+            ShortcutInfo updatedShortcut = new ShortcutInfo.Builder(mContext, id)
+                    .setShortLabel(title)
+                    .setIcon(icon)
+                    .setLongLabel(description != null && !description.isEmpty() ? description : title)
+                    .setIntent(existingShortcut.getIntent())
+                    .build();
+
+            shortcutManager.updateShortcuts(java.util.Collections.singletonList(updatedShortcut));
+            promise.resolve(true);
+        } catch (Exception e) {
+            promise.reject("ERROR", e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void removeAllShortcuts(Promise promise) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            promise.reject("UNSUPPORTED", "Pinned launcher shortcuts require Android 8.0 or higher");
+            return;
+        }
+
+        try {
+            ShortcutManager shortcutManager = mContext.getSystemService(ShortcutManager.class);
+            if (shortcutManager == null) {
+                promise.reject("ERROR", "ShortcutManager not available");
+                return;
+            }
+
+            List<ShortcutInfo> pinnedShortcuts = shortcutManager.getPinnedShortcuts();
+            if (!pinnedShortcuts.isEmpty()) {
+                List<String> ids = new ArrayList<>();
+                for (ShortcutInfo shortcut : pinnedShortcuts) {
+                    ids.add(shortcut.getId());
+                }
+                shortcutManager.disableShortcuts(ids);
+            }
+            promise.resolve(true);
+        } catch (Exception e) {
+            promise.reject("ERROR", e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void getAllShortcuts(Promise promise) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+        ShortcutManager shortcutManager = mContext.getSystemService(ShortcutManager.class);
+        WritableArray shortcuts = Arguments.createArray();
+        List<ShortcutInfo> infos = shortcutManager.getPinnedShortcuts();
+
+        for (ShortcutInfo info: infos) {
+            WritableMap data = Arguments.createMap();
+            data.putString("id", info.getId());
+            if (info.getShortLabel() != null) {
+                data.putString("title", info.getShortLabel().toString());
+            }
+
+            if (info.getLongLabel() != null) {
+                data.putString("description", info.getLongLabel().toString());
+            }
+
+
+            if (!Objects.requireNonNull(info.getCategories()).isEmpty()) {
+                if (info.getCategories().contains("note")) {
+                    data.putString("type", "note");
+                } else if (info.getCategories().contains("notebook")) {
+                    data.putString("type", "notebook");
+                } else if (info.getCategories().contains("tag")) {
+                    data.putString("type", "tag");
+                } else if (info.getCategories().contains("color")) {
+                    data.putString("type", "color");
+                }
+            }
+            shortcuts.pushMap(data);
+        }
+        promise.resolve(shortcuts);
+    }
+
+    private Icon createLetterIcon(String type, String title, String colorCode) {
+
+        String letter = type.contains("tag") ? "#" : title != null && !title.isEmpty()
+                ? title.substring(0, 1).toUpperCase()
+                : "?";
+        int color = type.equals("color") ? Color.parseColor(colorCode) : getColorForLetter(letter);
+        
+        if (type.equals("notebook")) return Icon.createWithResource(mContext, R.drawable.ic_notebook);
+        // Use a larger canvas and fill it completely to avoid white borders from launcher masking.
+        int iconSize = 256;
+        Bitmap bitmap = Bitmap.createBitmap(iconSize, iconSize, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+
+        if (type.equals("color")) {
+            Paint backgroundPaint = new Paint();
+            backgroundPaint.setColor(color);
+            backgroundPaint.setAntiAlias(true);
+            canvas.drawCircle(iconSize / 2, iconSize / 2, iconSize/2, backgroundPaint);
+        } else {
+            Paint textPaint = new Paint();
+            textPaint.setColor(color);
+            textPaint.setTextSize(130);
+            textPaint.setAntiAlias(true);
+            textPaint.setTextAlign(Paint.Align.CENTER);
+            textPaint.setTypeface(android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD));
+
+            float x = iconSize / 2f;
+            float y = (iconSize / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f);
+
+            canvas.drawText(letter, x, y, textPaint);
+        }
+
+        return Icon.createWithBitmap(bitmap);
+    }
+
+    private int getColorForLetter(String letter) {
+        int[] colors = {
+            0xFF1976D2, // Blue
+            0xFFD32F2F, // Red
+            0xFF388E3C, // Green
+            0xFFF57C00, // Orange
+            0xFF7B1FA2, // Purple
+            0xFF0097A7, // Cyan
+            0xFFC2185B, // Pink
+            0xFF455A64, // Blue Grey
+            0xFF6A1B9A, // Deep Purple
+            0xFF00796B, // Teal
+            0xFF512DA8, // Indigo
+            0xFF1565C0  // Dark Blue
+        };
+        
+        int hash = Math.abs(letter.hashCode());
+        return colors[hash % colors.length];
+    }
+
+}

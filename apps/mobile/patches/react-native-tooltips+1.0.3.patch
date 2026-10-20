@@ -1,0 +1,352 @@
+diff --git a/node_modules/react-native-tooltips/RNTooltips.js b/node_modules/react-native-tooltips/RNTooltips.js
+index 7dd4478..cf33173 100644
+--- a/node_modules/react-native-tooltips/RNTooltips.js
++++ b/node_modules/react-native-tooltips/RNTooltips.js
+@@ -1,11 +1,11 @@
+ import { PureComponent } from "react";
+ import {
+   findNodeHandle,
+-  ViewPropTypes,
+   NativeModules,
+   Platform
+ } from "react-native";
+ import PropTypes from "prop-types";
++import {ViewPropTypes} from "deprecated-react-native-prop-types";
+ 
+ let { RNTooltips } = NativeModules;
+ 
+diff --git a/node_modules/react-native-tooltips/ios/RNTooltips.podspec b/node_modules/react-native-tooltips/RNTooltips.podspec
+similarity index 87%
+rename from node_modules/react-native-tooltips/ios/RNTooltips.podspec
+rename to node_modules/react-native-tooltips/RNTooltips.podspec
+index 0ccfd23..7771e6f 100644
+--- a/node_modules/react-native-tooltips/ios/RNTooltips.podspec
++++ b/node_modules/react-native-tooltips/RNTooltips.podspec
+@@ -1,6 +1,6 @@
+ require 'json'
+ 
+-package = JSON.parse(File.read(File.join(__dir__, '../package.json')))
++package = JSON.parse(File.read(File.join(__dir__, 'package.json')))
+ 
+ Pod::Spec.new do |s|
+   s.name                   = 'RNTooltips'
+@@ -13,7 +13,6 @@ Pod::Spec.new do |s|
+   s.source                 = { :git => 'https://github.com/prscX/react-native-tooltips.git', :tag => s.version }
+ 
+   s.platform               = :ios, '9.0'
+-  s.ios.deployment_target  = '8.0'
+ 
+   s.preserve_paths         = 'LICENSE', 'package.json'
+   s.source_files           = '**/*.{h,m}'
+diff --git a/node_modules/react-native-tooltips/android/build.gradle b/node_modules/react-native-tooltips/android/build.gradle
+index 978045f..59c64f1 100644
+--- a/node_modules/react-native-tooltips/android/build.gradle
++++ b/node_modules/react-native-tooltips/android/build.gradle
+@@ -3,8 +3,9 @@ buildscript {
+     repositories {
+         google()
+         mavenCentral()
++        maven { url 'https://jitpack.io' }
+         maven { url "https://maven.google.com" }
+-        jcenter()
++
+     }
+ 
+     dependencies {
+@@ -14,18 +15,19 @@ buildscript {
+ 
+ apply plugin: 'com.android.library'
+ 
+-android {
+-    compileSdkVersion 29
+-    buildToolsVersion '29.0.2'
+ 
++def safeExtGet(prop, fallback) {
++    rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
++}
++
++android {
++    compileSdkVersion safeExtGet('compileSdkVersion', 29)
++    buildToolsVersion safeExtGet('buildToolsVersion', '29.0.2')
+     defaultConfig {
+-        minSdkVersion 16
+-        targetSdkVersion 29
++        minSdkVersion safeExtGet('minSdkVersion', 21)
++        targetSdkVersion safeExtGet('targetSdkVersion', 29)
+         versionCode 1
+-        versionName "1.0"
+-    }
+-    lintOptions {
+-        abortOnError false
++        versionName "0.1"
+     }
+ }
+ 
+@@ -36,5 +38,5 @@ repositories {
+ 
+ dependencies {
+     implementation 'com.facebook.react:react-native:+'
+-    implementation 'com.github.florent37:viewtooltip:1.1.6'
++    implementation 'com.github.florent37:ViewTooltip:f79a8955ef'
+ }
+diff --git a/node_modules/react-native-tooltips/android/src/main/java/px/tooltips/RNTooltipsModule.java b/node_modules/react-native-tooltips/android/src/main/java/px/tooltips/RNTooltipsModule.java
+index e987ffb..e898a40 100644
+--- a/node_modules/react-native-tooltips/android/src/main/java/px/tooltips/RNTooltipsModule.java
++++ b/node_modules/react-native-tooltips/android/src/main/java/px/tooltips/RNTooltipsModule.java
+@@ -11,9 +11,11 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule;
+ import com.facebook.react.bridge.ReactMethod;
+ import com.facebook.react.bridge.Callback;
+ import com.facebook.react.bridge.ReadableMap;
+-import com.facebook.react.uimanager.UIManagerModule;
++import com.facebook.react.bridge.UIManager;
+ import com.facebook.react.uimanager.UIBlock;
+ import com.facebook.react.uimanager.NativeViewHierarchyManager;
++import com.facebook.react.uimanager.UIManagerHelper;
++import com.facebook.react.uimanager.common.UIManagerType;
+ import com.github.florent37.viewtooltip.ViewTooltip;
+ 
+ public class RNTooltipsModule extends ReactContextBaseJavaModule {
+@@ -34,12 +36,12 @@ public class RNTooltipsModule extends ReactContextBaseJavaModule {
+ 
+   @ReactMethod
+   public void Show(final int targetId, final int parentId, final ReadableMap props, final Callback onHide) {
+-      this.reactContext.getNativeModule(UIManagerModule.class).prependUIBlock(new UIBlock() {
+ 
+-        @Override
+-        public void execute(NativeViewHierarchyManager nativeViewHierarchyManager) {
+ 
+-          final ViewGroup target = (ViewGroup) nativeViewHierarchyManager.resolveView(targetId);
++          UIManager uiManager = UIManagerHelper.getUIManager(reactContext, UIManagerType.FABRIC);
++          if (uiManager == null) return;
++
++          final ViewGroup target = (ViewGroup) uiManager.resolveView(targetId);
+ 
+           reactContext.runOnUiQueueThread(new Runnable() {
+             @Override
+@@ -121,8 +123,7 @@ public class RNTooltipsModule extends ReactContextBaseJavaModule {
+             }
+ 
+           });
+-        }
+-      });
++
+   }
+ 
+   @ReactMethod
+diff --git a/node_modules/react-native-tooltips/ios/RNTooltips.h b/node_modules/react-native-tooltips/ios/RNTooltips.h
+index a150e3e..096ad86 100644
+--- a/node_modules/react-native-tooltips/ios/RNTooltips.h
++++ b/node_modules/react-native-tooltips/ios/RNTooltips.h
+@@ -1,6 +1,11 @@
+ 
+ #import "RCTUIManager.h"
+ #import <UIKit/UIKit.h>
++#if __has_include("RCTBridgeModule.h")
++#import "RCTBridgeModule.h"
++#else
++#import <React/RCTBridgeModule.h>
++#endif
+ 
+ #import <SexyTooltip/SexyTooltip.h>
+ 
+diff --git a/node_modules/react-native-tooltips/ios/RNTooltips.m b/node_modules/react-native-tooltips/ios/RNTooltips.m
+index fb96466..75a6fdb 100644
+--- a/node_modules/react-native-tooltips/ios/RNTooltips.m
++++ b/node_modules/react-native-tooltips/ios/RNTooltips.m
+@@ -1,4 +1,6 @@
+ #import "RNTooltips.h"
++#import "RCTUIManager.h"
++#import "RCTUIManagerUtils.h"
+ 
+ @interface TooltipDelegate : NSObject <SexyTooltipDelegate>
+ 
+@@ -7,9 +9,15 @@ @interface TooltipDelegate : NSObject <SexyTooltipDelegate>
+ @end
+ 
+ @implementation TooltipDelegate
++bool didHide = NO;
++
+ - (void)tooltipDidDismiss:(SexyTooltip *)tooltip {
++    if (didHide == YES) return;
++    tooltip.delegate = nil;
+     tooltip = nil;
++    didHide = YES;
+     _onHide(@[]);
++   
+ }
+ 
+ @end
+@@ -17,77 +25,120 @@ - (void)tooltipDidDismiss:(SexyTooltip *)tooltip {
+ 
+ @implementation RNTooltips
+ 
+-SexyTooltip *toolTip;
++NSMutableDictionary *tooltips;
+ 
+ @synthesize bridge = _bridge;
+ 
++- (instancetype)init
++{
++    self = [super init];
++    tooltips = [NSMutableDictionary dictionary];
++    return self;
++}
++
+ - (dispatch_queue_t)methodQueue
+ {
+     return dispatch_get_main_queue();
+ }
+ RCT_EXPORT_MODULE()
+ 
+-
+ RCT_EXPORT_METHOD(Show:(nonnull NSNumber *)targetViewTag inParentView:(nonnull NSNumber *)parentViewTag props:(NSDictionary *)props onHide:(RCTResponseSenderBlock)onHide)
+ {
+-  UIView *target = [self.bridge.uiManager viewForReactTag: targetViewTag];
+-  UIView *parentView = [self.bridge.uiManager viewForReactTag:parentViewTag];
+-  if (!parentView) {
+-    // parent is null, then return
+-    return;
+-  }
+-    
+-  NSString *text = [props objectForKey: @"text"];
+-//  NSNumber *position = [props objectForKey: @"position"]; // not used yet
+-//  NSNumber *align = [props objectForKey: @"align"]; // not used yet
+-  NSNumber *autoHide = [props objectForKey: @"autoHide"];
+-  NSNumber *duration = [props objectForKey: @"duration"];
+-  NSNumber *clickToHide = [props objectForKey: @"clickToHide"];
+-  NSNumber *corner = [props objectForKey: @"corner"];
+-  NSString *tintColor = [props objectForKey: @"tintColor"];
+-  NSString *textColor = [props objectForKey: @"textColor"];
+-  NSNumber *textSize = [props objectForKey: @"textSize"];
+-//  NSNumber *gravity = [props objectForKey: @"gravity"]; not used yet
+-  NSNumber *shadow = [props objectForKey: @"shadow"];
+-  NSNumber *arrow = [props objectForKey: @"arrow"];
+-
+-    NSMutableAttributedString *attributes = [[NSMutableAttributedString alloc] initWithString: text];
+-    [attributes addAttribute:NSForegroundColorAttributeName value:[RNTooltips colorFromHexCode: textColor] range:NSMakeRange(0, text.length)];
+-    [attributes addAttribute:NSFontAttributeName value: [UIFont systemFontOfSize: [textSize floatValue]] range:NSMakeRange(0,text.length)];
+-
+-    toolTip = [[SexyTooltip alloc] initWithAttributedString: attributes sizedToView:parentView];
+-    toolTip.layer.zPosition = 9999; // make sure the tooltips is always in front of other views.
+-
+-    TooltipDelegate *delegate = [[TooltipDelegate alloc] init];
+-    delegate.onHide = onHide;
+-    [toolTip setDelegate: delegate];
+-
+-    toolTip.color = [RNTooltips colorFromHexCode: tintColor];
+-    toolTip.cornerRadius = [corner floatValue];
+-    toolTip.dismissesOnTap = [clickToHide boolValue];
+-    toolTip.padding = UIEdgeInsetsMake(6.0, 8.0, 6.0, 8.0);
+-    
+-    if (![arrow boolValue]) {
+-        toolTip.arrowHeight = 0;
+-    }
+-    if ([shadow boolValue]) {
+-        toolTip.hasShadow = YES;
+-    }
+-    if ([autoHide boolValue]) {
+-        [toolTip dismissInTimeInterval:(NSTimeInterval) [duration floatValue] animated: YES];
++        UIView *target = [self.bridge.uiManager viewForReactTag: targetViewTag];
++        UIView *parentView = [self.bridge.uiManager viewForReactTag:parentViewTag];
++        if (!parentView) {
++            return;
++        }
++        NSString *text = props[@"text"];
++        NSNumber *position = props[@"position"];
++        //  NSNumber *align = [props objectForKey: @"align"]; // not used yet
++        NSNumber *autoHide = props[@"autoHide"];
++        NSNumber *duration = props[@"duration"];
++        NSNumber *clickToHide = props[@"clickToHide"];
++        NSNumber *corner = props[@"corner"];
++        NSString *tintColor = props[@"tintColor"];
++        NSString *textColor = props[@"textColor"];
++        NSNumber *textSize = props[@"textSize"];
++        //  NSNumber *gravity = [props objectForKey: @"gravity"]; not used yet
++        NSNumber *shadow = props[@"shadow"];
++        NSNumber *arrow = props[@"arrow"];
++        
++        NSMutableAttributedString *attributes = [[NSMutableAttributedString alloc] initWithString: text];
++        [attributes addAttribute:NSForegroundColorAttributeName value:[RNTooltips colorFromHexCode: textColor] range:NSMakeRange(0, text.length)];
++        [attributes addAttribute:NSFontAttributeName value: [UIFont systemFontOfSize: [textSize floatValue]] range:NSMakeRange(0,text.length)];
++        
++        SexyTooltip *toolTip = [[SexyTooltip alloc] initWithAttributedString: attributes sizedToView:parentView];
++
++            if (position != nil) {
++                [toolTip setPermittedArrowDirections:@[@([self getPosition:position])]];
++                [toolTip setArrowDirection:[self getPosition:position]];
++            }
++    
++        TooltipDelegate *delegate = [[TooltipDelegate alloc] init];
++        delegate.onHide = onHide;
++        [toolTip setDelegate: delegate];
++        toolTip.color = [RNTooltips colorFromHexCode: tintColor];
++        toolTip.cornerRadius = [corner floatValue];
++        toolTip.dismissesOnTap = [clickToHide boolValue];
++        toolTip.padding = UIEdgeInsetsMake(6.0, 8.0, 6.0, 8.0);
++        
++        if (![arrow boolValue]) {
++            toolTip.arrowHeight = 0;
++        }
++        if ([shadow boolValue]) {
++            toolTip.hasShadow = YES;
++        }
++        if ([autoHide boolValue]) {
++            [self dismissAfterDelay:targetViewTag.stringValue duration:duration];
++        }
++        
++        [toolTip presentFromView:target animated:YES];
++        [parentView.superview bringSubviewToFront:toolTip];
++        [tooltips setObject:toolTip forKey:targetViewTag.stringValue];
++}
++
++- (SexyTooltipArrowDirection) getPosition:(NSNumber *)position {
++    if (position.intValue == 1) {
++        return SexyTooltipArrowDirectionRight;
++    } else if (position.intValue == 2) {
++        return SexyTooltipArrowDirectionLeft;
++    } else if (position.intValue == 3) {
++        return SexyTooltipArrowDirectionDown;
++    } else if (position.intValue == 4) {
++        return SexyTooltipArrowDirectionUp;
++    } else {
++        return SexyTooltipArrowDirectionDown;
+     }
+ 
+-    [toolTip presentFromView:target animated:YES];
++}
++
++- (void) dismissAfterDelay:(NSString*)viewTag duration:(NSNumber *)duration {
++    
++    float delay = [duration floatValue]/1000;
++    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC*delay),
++                   dispatch_get_main_queue(), ^{
++        if (tooltips[viewTag] == nil) {
++            return;
++        }
++        SexyTooltip *tooltip = tooltips[viewTag];
++        [tooltip dismissAnimated:true];
++        tooltip.delegate = nil;
++        tooltip = nil;
++        [tooltips removeObjectForKey:viewTag];
++    });
+ }
+ 
+ RCT_EXPORT_METHOD(Dismiss:(nonnull NSNumber *)view) {
+   
+-  if (toolTip == nil) {
+-    return;
+-  }
++        if (tooltips[view.stringValue] == nil) {
++            return;
++        }
++        
++        SexyTooltip *tooltip = tooltips[view.stringValue];
++        [tooltip dismiss];
++        tooltip = nil;
++        [tooltips removeObjectForKey:view.stringValue];
+   
+-  [toolTip dismiss];
+-  toolTip = nil;
+ }
+ 
+ 

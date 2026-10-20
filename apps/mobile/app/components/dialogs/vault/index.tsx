@@ -1,0 +1,942 @@
+/*
+This file is part of the Notesnook project (https://sunshine.com/)
+
+Copyright (C) 2023 Streetwriters (Private) Limited
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+import Clipboard from "@react-native-clipboard/clipboard";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { InteractionManager, View, TextInput } from "react-native";
+import Share from "react-native-share";
+import { sunshine } from "../../../../e2e/test.ids";
+import { db } from "../../../common/database";
+import BiometricService from "../../../services/biometrics";
+import { DDS } from "../../../services/device-detection";
+import {
+  ToastManager,
+  Vault,
+  VaultRequestType,
+  eSendEvent,
+  eSubscribeEvent,
+  eUnSubscribeEvent
+} from "../../../services/event-manager";
+import Navigation from "../../../services/navigation";
+import { getElevationStyle } from "../../../utils/elevation";
+import {
+  eCloseActionSheet,
+  eCloseVaultDialog,
+  eOnLoadNote,
+  eOpenVaultDialog,
+  eUpdateNoteInEditor
+} from "../../../utils/events";
+import { deleteItems } from "../../../utils/functions";
+import { fluidTabsRef } from "../../../utils/global-refs";
+import { convertNoteToText } from "../../../utils/note-to-text";
+import { sleep } from "../../../utils/time";
+import BaseDialog from "../../dialog/base-dialog";
+import DialogButtons from "../../dialog/dialog-buttons";
+import DialogHeader from "../../dialog/dialog-header";
+import { Toast } from "../../toast";
+import { Button } from "../../ui/button";
+import FormInput, {
+  createFormRef,
+  validators
+} from "../../ui/input/form-input";
+import Seperator from "../../ui/seperator";
+import Paragraph from "../../ui/typography/paragraph";
+import { strings } from "@notesnook/intl";
+import { DefaultAppStyles } from "../../../utils/styles";
+import {
+  isEncryptedContent,
+  Note,
+  NoteContent,
+  VAULT_ERRORS
+} from "@notesnook/core";
+import { useThemeColors } from "@notesnook/theme";
+import { AppFontSize } from "../../../utils/size";
+import { Pressable } from "../../ui/pressable";
+import AppIcon from "../../ui/AppIcon";
+
+export const VaultDialog: React.FC = () => {
+  const { colors } = useThemeColors();
+
+  // UI State
+  const [visible, setVisible] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [deleteAll, setDeleteAll] = useState(false);
+  const [biometricUnlock, setBiometricUnlock] = useState(false);
+  const [isBiometryAvailable, setIsBiometryAvailable] = useState(false);
+  const [isBiometryEnrolled, setIsBiometryEnrolled] = useState(false);
+
+  // Refs for non-UI state
+  const requestTypeRef = useRef<VaultRequestType | null>(null);
+  const noteRef = useRef<Note | undefined>(undefined);
+  const titleRef = useRef<string>(strings.goToEditor());
+  const descriptionRef = useRef<string | null>(null);
+  const paragraphRef = useRef<string | null>(null);
+  const buttonTitleRef = useRef<string | null>(null);
+  const positiveButtonTypeRef = useRef<"errorShade" | "transparent" | "accent">(
+    "transparent"
+  );
+  const customActionTitleRef = useRef<string | null>(null);
+  const customActionParagraphRef = useRef<string | null>(null);
+  const noteLockedRef = useRef(false);
+  const onUnlockRef = useRef<
+    | ((
+        item: Note & {
+          content?: NoteContent<false>;
+        },
+        password: string
+      ) => void)
+    | undefined
+  >(undefined);
+
+  // Form ref
+  const formRef = useRef(
+    createFormRef({
+      password: "",
+      confirmPassword: "",
+      newPassword: ""
+    })
+  );
+
+  // Input refs
+  const passInputRef = useRef<TextInput>(null);
+  const confirmPassRef = useRef<TextInput>(null);
+  const newPassInputRef = useRef<TextInput>(null);
+
+  const close = useCallback(() => {
+    if (loading) {
+      ToastManager.show({
+        heading: titleRef.current,
+        message: strings.pleaseWait() + "...",
+        type: "success",
+        context: "local"
+      });
+      return;
+    }
+
+    Navigation.queueRoutesForUpdate();
+
+    // Reset form values and errors
+    formRef.current.setValue("password", "");
+    formRef.current.setValue("confirmPassword", "");
+    formRef.current.setValue("newPassword", "");
+    formRef.current.clearErrors();
+
+    // Reset refs
+    requestTypeRef.current = null;
+    noteRef.current = undefined;
+    titleRef.current = strings.goToEditor();
+    descriptionRef.current = null;
+    paragraphRef.current = null;
+    buttonTitleRef.current = null;
+    positiveButtonTypeRef.current = "transparent";
+    customActionTitleRef.current = null;
+    customActionParagraphRef.current = null;
+    noteLockedRef.current = false;
+    onUnlockRef.current = undefined;
+
+    // Reset UI state
+    setVisible(false);
+    setLoading(false);
+    setDeleteAll(false);
+    setBiometricUnlock(false);
+    setIsBiometryAvailable(false);
+    setIsBiometryEnrolled(false);
+  }, [loading]);
+
+  const deleteVault = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { password } = formRef.current.getValues();
+      // The vault has a password of its own. There is no account password to
+      // check against any more, so the vault itself decides whether the one
+      // that was typed is the right one.
+      let verified = false;
+      try {
+        await db.vault.unlock(password);
+        verified = true;
+      } catch (e) {
+        verified = false;
+      }
+      if (verified) {
+        let noteIds: string[] = [];
+        if (deleteAll) {
+          const vault = await db.vaults.default();
+          const relations = await db.relations
+            .from(
+              {
+                type: "vault",
+                id: vault!.id
+              },
+              "note"
+            )
+            .get();
+          noteIds = relations.map((item) => item.toId);
+        }
+        await db.vault.delete(deleteAll);
+        await BiometricService.resetCredentials();
+
+        if (deleteAll) {
+          noteIds.forEach((id) => {
+            eSendEvent(
+              eUpdateNoteInEditor,
+              {
+                id: id,
+                deleted: true
+              },
+              true
+            );
+          });
+        }
+        eSendEvent("vaultUpdated");
+        setLoading(false);
+        close();
+        ToastManager.show({
+          message: strings.vaultDeleted(),
+          type: "success",
+          context: "global"
+        });
+      } else {
+        setLoading(false);
+        formRef.current.setError("password", strings.passwordIncorrect());
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, [deleteAll, close]);
+
+  const clearVault = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { password } = formRef.current.getValues();
+      const vault = await db.vaults.default();
+      const relations = await db.relations.from(vault!, "note").get();
+      const noteIds = relations.map((item) => item.toId);
+
+      await db.vault.clear(password);
+
+      noteIds.forEach((id) => {
+        eSendEvent(
+          eUpdateNoteInEditor,
+          {
+            id: id,
+            deleted: true
+          },
+          true
+        );
+      });
+      setLoading(false);
+      close();
+      eSendEvent("vaultUpdated");
+      ToastManager.show({
+        message: strings.vaultCleared(),
+        type: "success"
+      });
+    } catch (e) {
+      formRef.current.setError("password", strings.passwordIncorrect());
+    }
+    setLoading(false);
+  }, [close]);
+
+  const enrollFingerprint = useCallback(
+    async (password: string) => {
+      setLoading(true);
+      try {
+        await db.vault.unlock(password);
+        await BiometricService.storeCredentials(password);
+        setLoading(false);
+        eSendEvent("vaultUpdated");
+        ToastManager.show({
+          heading: strings.biometricUnlockEnabled(),
+          type: "success",
+          context: "global"
+        });
+        close();
+      } catch (e) {
+        formRef.current.setError("password", strings.passwordIncorrect());
+        setLoading(false);
+      }
+    },
+    [close]
+  );
+
+  const takeErrorAction = useCallback(() => {
+    formRef.current.setError("password", strings.passwordIncorrect());
+    setVisible(true);
+  }, []);
+
+  const lockNote = useCallback(async () => {
+    const { password } = formRef.current.getValues();
+    if (!password || password.trim() === "") {
+      formRef.current.setError("password", strings.passwordIncorrect());
+      return;
+    } else {
+      await db.vault.add(noteRef.current!.id);
+
+      eSendEvent(eUpdateNoteInEditor, noteRef.current, true);
+
+      close();
+      ToastManager.show({
+        message: strings.noteLocked(),
+        type: "error",
+        context: "local"
+      });
+      setLoading(false);
+    }
+  }, [close]);
+
+  const permanantUnlock = useCallback(() => {
+    const { password } = formRef.current.getValues();
+    db.vault
+      .remove(noteRef.current!.id, password)
+      .then(async () => {
+        ToastManager.show({
+          heading: strings.noteUnlocked(),
+          type: "success",
+          context: "global"
+        });
+        eSendEvent(eUpdateNoteInEditor, noteRef.current, true);
+        if (biometricUnlock && !isBiometryEnrolled) {
+          await enrollFingerprint(password);
+        }
+        close();
+      })
+      .catch((e) => {
+        takeErrorAction();
+      });
+  }, [
+    biometricUnlock,
+    isBiometryEnrolled,
+    close,
+    enrollFingerprint,
+    takeErrorAction
+  ]);
+
+  const openInEditor = useCallback(
+    (note: Note & { content?: NoteContent<false> }) => {
+      close();
+      InteractionManager.runAfterInteractions(async () => {
+        eSendEvent(eOnLoadNote, {
+          item: note
+        });
+        if (!DDS.isTab) {
+          fluidTabsRef.current?.goToPage("editor");
+        }
+      });
+    },
+    [close]
+  );
+
+  const copyNote = useCallback(
+    async (note: Note & { content?: NoteContent<false> }) => {
+      Clipboard.setString((await convertNoteToText(note, true)) || "");
+      ToastManager.show({
+        heading: strings.noteCopied(),
+        type: "success",
+        context: "global"
+      });
+      close();
+    },
+    [close]
+  );
+
+  const shareNote = useCallback(
+    async (note: Note & { content?: NoteContent<false> }) => {
+      close();
+      try {
+        await Share.open({
+          title: note.title,
+          failOnCancel: false,
+          message: (await convertNoteToText(note)) || ""
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [close]
+  );
+
+  const deleteNote = useCallback(async () => {
+    const { password } = formRef.current.getValues();
+    try {
+      await db.vault.remove(noteRef.current!.id, password);
+      await deleteItems("note", [noteRef.current!.id]);
+      close();
+    } catch (e) {
+      takeErrorAction();
+    }
+  }, [close, takeErrorAction]);
+
+  const openNote = useCallback(async () => {
+    const { password } = formRef.current.getValues();
+    try {
+      if (!password) throw new Error("Invalid password");
+
+      const note = await db.vault.open(noteRef.current!.id, password);
+      if (!note) throw new Error("Failed to unlock note.");
+      if (biometricUnlock && !isBiometryEnrolled) {
+        await enrollFingerprint(password);
+      }
+
+      const requestType = requestTypeRef.current;
+
+      if (requestType === VaultRequestType.GoToEditor) {
+        openInEditor(note);
+      } else if (requestType === VaultRequestType.ShareNote) {
+        await shareNote(note);
+      } else if (requestType === VaultRequestType.DeleteNote) {
+        await deleteNote();
+      } else if (requestType === VaultRequestType.CopyNote) {
+        await copyNote(note);
+      } else if (
+        requestType === VaultRequestType.CustomAction &&
+        onUnlockRef.current
+      ) {
+        const unlock = onUnlockRef.current;
+        close();
+        await sleep(500);
+        unlock(note, password);
+      }
+    } catch (e) {
+      takeErrorAction();
+    }
+  }, [
+    biometricUnlock,
+    isBiometryEnrolled,
+    enrollFingerprint,
+    openInEditor,
+    shareNote,
+    deleteNote,
+    copyNote,
+    close,
+    takeErrorAction
+  ]);
+
+  const unlockNote = useCallback(async () => {
+    const { password } = formRef.current.getValues();
+    if (!password || password.trim() === "") {
+      formRef.current.setError("password", strings.passwordIncorrect());
+      return;
+    }
+    if (requestTypeRef.current === VaultRequestType.PermanentUnlock) {
+      permanantUnlock();
+    } else {
+      await openNote();
+    }
+  }, [permanantUnlock, openNote]);
+
+  const createVault = useCallback(async () => {
+    const { password } = formRef.current.getValues();
+    await db.vault.create(password);
+
+    if (biometricUnlock) {
+      await enrollFingerprint(password);
+    }
+    if (noteRef.current?.id) {
+      await db.vault.add(noteRef.current.id);
+      eSendEvent(eUpdateNoteInEditor, noteRef.current, true);
+      setLoading(false);
+      ToastManager.show({
+        heading: strings.noteLocked(),
+        type: "success",
+        context: "global"
+      });
+      close();
+    } else {
+      ToastManager.show({
+        heading: strings.vaultCreated(),
+        type: "success",
+        context: "global"
+      });
+      close();
+    }
+    eSendEvent("vaultUpdated");
+  }, [biometricUnlock, enrollFingerprint, close]);
+
+  const revokeFingerprintAccess = useCallback(async () => {
+    try {
+      await BiometricService.resetCredentials();
+      eSendEvent("vaultUpdated");
+      ToastManager.show({
+        heading: strings.biometricUnlockDisabled(),
+        type: "success",
+        context: "global"
+      });
+    } catch (e: any) {
+      ToastManager.show({
+        heading: e.message,
+        type: "success",
+        context: "global"
+      });
+    }
+  }, []);
+
+  const onPress = useCallback(async () => {
+    const requestType = requestTypeRef.current;
+
+    if (requestType === VaultRequestType.RevokeFingerprint) {
+      await revokeFingerprintAccess();
+      close();
+      return;
+    }
+
+    if (loading) return;
+
+    if (!formRef.current.validate()) return;
+
+    const { password, newPassword } = formRef.current.getValues();
+
+    if (requestType === VaultRequestType.DeleteVault) {
+      setLoading(true);
+      await deleteVault();
+      setLoading(false);
+      return;
+    }
+
+    if (requestType === VaultRequestType.CreateVault) {
+      createVault();
+    } else if (requestType === VaultRequestType.ChangePassword) {
+      setLoading(true);
+
+      db.vault
+        .changePassword(password, newPassword)
+        .then(async () => {
+          setLoading(false);
+          if (biometricUnlock) {
+            enrollFingerprint(newPassword);
+          } else {
+            await BiometricService.resetCredentials();
+          }
+          ToastManager.show({
+            heading: strings.passwordUpdated(),
+            type: "success",
+            context: "global"
+          });
+          close();
+        })
+        .catch((e) => {
+          setLoading(false);
+          if (e.message === VAULT_ERRORS.wrongPassword) {
+            formRef.current.setError("password", strings.passwordIncorrect());
+          } else {
+            console.error(e);
+          }
+        });
+    } else if (requestType === VaultRequestType.LockNote) {
+      db.vault
+        .unlock(password)
+        .then(async (unlocked) => {
+          if (unlocked) {
+            await lockNote();
+          } else {
+            formRef.current.setError("password", strings.passwordIncorrect());
+          }
+        })
+        .catch((e) => {
+          formRef.current.setError("password", strings.passwordIncorrect());
+        });
+    } else if (
+      requestType === VaultRequestType.UnlockNote ||
+      requestType === VaultRequestType.PermanentUnlock ||
+      requestType === VaultRequestType.GoToEditor ||
+      requestType === VaultRequestType.ShareNote ||
+      requestType === VaultRequestType.CopyNote ||
+      requestType === VaultRequestType.DeleteNote ||
+      requestType === VaultRequestType.CustomAction
+    ) {
+      if (noteLockedRef.current) {
+        await unlockNote();
+      } else {
+        console.log("Error: Note should be locked for this operation");
+      }
+    } else if (requestType === VaultRequestType.EnableFingerprint) {
+      enrollFingerprint(password);
+    } else if (requestType === VaultRequestType.ClearVault) {
+      await clearVault();
+    } else if (requestType === VaultRequestType.DeleteVault) {
+      await deleteVault();
+    }
+  }, [
+    loading,
+    biometricUnlock,
+    revokeFingerprintAccess,
+    close,
+    createVault,
+    enrollFingerprint,
+    unlockNote,
+    lockNote,
+    clearVault,
+    deleteVault
+  ]);
+
+  const onPressFingerprintAuth = useCallback(
+    async (title?: string, description?: string) => {
+      try {
+        const credentials = await BiometricService.getCredentials(
+          title || titleRef.current,
+          description || descriptionRef.current || ""
+        );
+
+        if (!credentials) throw new Error("Failed to get user credentials");
+
+        if (credentials?.password) {
+          formRef.current.setValue("password", credentials.password);
+          onPress();
+        } else {
+          eSendEvent(eCloseActionSheet);
+          await sleep(300);
+          setVisible(true);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [onPress]
+  );
+
+  const open = useCallback(
+    async (data: Vault) => {
+      const biometry = await BiometricService.isBiometryAvailable();
+      const available = !!biometry;
+      const fingerprint = await BiometricService.hasInternetCredentials();
+
+      if (data.item) {
+        const locked = await db.vaults.itemExists(data.item);
+        noteLockedRef.current = locked;
+        if (!locked) {
+          const content = await db.content.findByNoteId(data.item!.id);
+          if (content && isEncryptedContent(content)) {
+            noteLockedRef.current = true;
+          }
+        }
+      }
+
+      // Set refs
+      noteRef.current = data.item;
+      titleRef.current = data.title || strings.goToEditor();
+      descriptionRef.current = data.description || null;
+      paragraphRef.current = data.paragraph || null;
+      buttonTitleRef.current = data.buttonTitle || null;
+      positiveButtonTypeRef.current = data.positiveButtonType || "transparent";
+      customActionTitleRef.current = data.customActionTitle || null;
+      customActionParagraphRef.current = data.customActionParagraph || null;
+      onUnlockRef.current = data.onUnlock;
+      requestTypeRef.current = data.requestType;
+
+      // Set UI state
+      setIsBiometryAvailable(available);
+      setIsBiometryEnrolled(fingerprint);
+      setBiometricUnlock(fingerprint);
+      setDeleteAll(false);
+      setLoading(false);
+
+      // Auto-unlock with fingerprint if applicable
+      const canAutoUnlock =
+        fingerprint &&
+        available &&
+        data.requestType !== VaultRequestType.EnableFingerprint &&
+        data.requestType !== VaultRequestType.RevokeFingerprint &&
+        data.requestType !== VaultRequestType.ChangePassword &&
+        data.requestType !== VaultRequestType.ClearVault &&
+        data.requestType !== VaultRequestType.DeleteVault &&
+        data.requestType !== VaultRequestType.CustomAction &&
+        data.requestType !== VaultRequestType.PermanentUnlock &&
+        data.requestType !== VaultRequestType.CreateVault;
+
+      if (canAutoUnlock && available) {
+        try {
+          await onPressFingerprintAuth(data.title, data.description);
+        } catch (e) {
+          setVisible(true);
+        }
+      } else {
+        setVisible(true);
+      }
+    },
+    [onPressFingerprintAuth]
+  );
+
+  useEffect(() => {
+    eSubscribeEvent(eOpenVaultDialog, open);
+    eSubscribeEvent(eCloseVaultDialog, close);
+
+    return () => {
+      eUnSubscribeEvent(eOpenVaultDialog, open);
+      eUnSubscribeEvent(eCloseVaultDialog, close);
+    };
+  }, [open, close]);
+
+  if (!visible) return null;
+
+  const requestType = requestTypeRef.current;
+  const isCreateVault = requestType === VaultRequestType.CreateVault;
+  const isChangePassword = requestType === VaultRequestType.ChangePassword;
+  const isClearVault = requestType === VaultRequestType.ClearVault;
+  const isDeleteVault = requestType === VaultRequestType.DeleteVault;
+  const isRevokeFingerprint =
+    requestType === VaultRequestType.RevokeFingerprint;
+  const isEnableFingerprint =
+    requestType === VaultRequestType.EnableFingerprint;
+  const isCustomAction = requestType === VaultRequestType.CustomAction;
+  const isDeleteNote = requestType === VaultRequestType.DeleteNote;
+  const isShareNote = requestType === VaultRequestType.ShareNote;
+  const isGoToEditor = requestType === VaultRequestType.GoToEditor;
+
+  return (
+    <BaseDialog
+      onShow={async () => {
+        await sleep(100);
+        passInputRef.current?.focus();
+      }}
+      statusBarTranslucent={false}
+      onRequestClose={close}
+      visible={true}
+    >
+      <View
+        style={{
+          ...getElevationStyle(5),
+          width: DDS.isTab ? 350 : "85%",
+          borderRadius: 10,
+          backgroundColor: colors.primary.background,
+          paddingTop: 12,
+          overflow: "hidden"
+        }}
+      >
+        <DialogHeader
+          title={titleRef.current}
+          paragraph={
+            paragraphRef.current || customActionParagraphRef.current || ""
+          }
+          icon="shield"
+          padding={12}
+        />
+
+        <View
+          style={{
+            paddingHorizontal: DefaultAppStyles.GAP
+          }}
+        >
+          {(isChangePassword ||
+            isClearVault ||
+            requestType === VaultRequestType.LockNote ||
+            requestType === VaultRequestType.UnlockNote ||
+            requestType === VaultRequestType.PermanentUnlock ||
+            isGoToEditor ||
+            isShareNote ||
+            isDeleteNote ||
+            isEnableFingerprint ||
+            isDeleteVault ||
+            isCustomAction) &&
+          !isRevokeFingerprint ? (
+            <>
+              <FormInput
+                name="password"
+                formRef={formRef}
+                fwdRef={passInputRef}
+                editable={!loading}
+                autoCapitalize="none"
+                testID={sunshine.ids.dialogs.vault.pwd}
+                autoComplete="password"
+                marginBottom={
+                  !biometricUnlock ||
+                  !isBiometryEnrolled ||
+                  isCreateVault ||
+                  isChangePassword ||
+                  isCustomAction
+                    ? 0
+                    : 10
+                }
+                onSubmitEditing={() => {
+                  if (isChangePassword) {
+                    newPassInputRef.current?.focus();
+                  } else {
+                    onPress();
+                  }
+                }}
+                returnKeyLabel={
+                  isChangePassword ? strings.next() : titleRef.current
+                }
+                returnKeyType={isChangePassword ? "next" : "done"}
+                secureTextEntry
+                placeholder={
+                  isChangePassword
+                    ? strings.currentPassword()
+                    : strings.password()
+                }
+                validators={[validators.required(strings.passwordRequired())]}
+              />
+
+              {!biometricUnlock ||
+              !isBiometryEnrolled ||
+              !isBiometryAvailable ||
+              isCreateVault ||
+              isChangePassword ||
+              isCustomAction ||
+              isDeleteVault ? null : (
+                <Button
+                  onPress={() =>
+                    onPressFingerprintAuth(strings.unlockNote(), "")
+                  }
+                  icon="fingerprint"
+                  width="100%"
+                  title={strings.unlockWithBiometrics()}
+                  type="transparent"
+                />
+              )}
+            </>
+          ) : null}
+
+          {isDeleteVault && (
+            <Pressable
+              onPress={() => setDeleteAll(!deleteAll)}
+              style={{
+                paddingVertical: 0,
+                flexDirection: "row",
+                gap: DefaultAppStyles.GAP_SMALL,
+                marginTop: DefaultAppStyles.GAP_VERTICAL_SMALL,
+                justifyContent: "flex-start"
+              }}
+            >
+              <AppIcon
+                name={
+                  deleteAll
+                    ? "check-circle-outline"
+                    : "checkbox-blank-circle-outline"
+                }
+                color={colors.error.accent}
+                size={AppFontSize.md}
+              />
+
+              <Paragraph color={colors.error.accent} size={AppFontSize.sm}>
+                {strings.deleteAllNotes()}
+              </Paragraph>
+            </Pressable>
+          )}
+
+          {isChangePassword ? (
+            <>
+              <Seperator half />
+              <FormInput
+                name="newPassword"
+                formRef={formRef}
+                fwdRef={newPassInputRef}
+                editable={!loading}
+                testID={sunshine.ids.dialogs.vault.changePwd}
+                autoCapitalize="none"
+                autoComplete="password"
+                onSubmitEditing={() => {
+                  onPress();
+                }}
+                returnKeyLabel="Change"
+                returnKeyType="done"
+                secureTextEntry
+                placeholder={strings.newPassword()}
+                validators={[validators.required(strings.passwordRequired())]}
+              />
+            </>
+          ) : null}
+
+          {isCreateVault ? (
+            <View>
+              <FormInput
+                name="password"
+                formRef={formRef}
+                fwdRef={passInputRef}
+                autoCapitalize="none"
+                testID={sunshine.ids.dialogs.vault.pwd}
+                autoComplete="password"
+                returnKeyLabel={strings.next()}
+                returnKeyType="next"
+                secureTextEntry
+                onSubmitEditing={() => {
+                  confirmPassRef.current?.focus();
+                }}
+                placeholder={strings.password()}
+                validators={[validators.required(strings.passwordRequired())]}
+              />
+
+              <FormInput
+                name="confirmPassword"
+                formRef={formRef}
+                fwdRef={confirmPassRef}
+                autoCapitalize="none"
+                testID={sunshine.ids.dialogs.vault.pwdAlt}
+                secureTextEntry
+                autoComplete="password"
+                returnKeyLabel="Create"
+                returnKeyType="done"
+                marginBottom={0}
+                onSubmitEditing={() => {
+                  onPress();
+                }}
+                placeholder={strings.confirmPassword()}
+                validators={[
+                  validators.required(strings.confirmPasswordRequired()),
+                  validators.matchField(
+                    "password",
+                    strings.passwordNotMatched()
+                  )
+                ]}
+              />
+            </View>
+          ) : null}
+
+          {biometricUnlock && !isBiometryEnrolled && !isCreateVault ? (
+            <Paragraph>{strings.vaultEnableBiometrics()}</Paragraph>
+          ) : null}
+
+          {!biometricUnlock &&
+          !isBiometryEnrolled &&
+          isBiometryAvailable &&
+          (requestType === VaultRequestType.CopyNote ||
+            requestType === VaultRequestType.DeleteNote ||
+            requestType === VaultRequestType.ShareNote ||
+            requestType === VaultRequestType.CustomAction ||
+            requestType === VaultRequestType.GoToEditor ||
+            requestType === VaultRequestType.PermanentUnlock ||
+            requestType === VaultRequestType.LockNote) ? (
+            <Button
+              onPress={() => {
+                setBiometricUnlock(!biometricUnlock);
+              }}
+              style={{
+                marginTop: DefaultAppStyles.GAP_VERTICAL
+              }}
+              icon="fingerprint"
+              width="100%"
+              title={strings.unlockWithBiometrics()}
+              iconColor={
+                biometricUnlock ? colors.selected.accent : colors.primary.icon
+              }
+              type={biometricUnlock ? "transparent" : "plain"}
+            />
+          ) : null}
+        </View>
+
+        <DialogButtons
+          onPressNegative={close}
+          onPressPositive={onPress}
+          loading={loading}
+          positiveType={positiveButtonTypeRef.current}
+          positiveTitle={buttonTitleRef.current || strings.unlock()}
+        />
+      </View>
+      <Toast context="local" />
+    </BaseDialog>
+  );
+};

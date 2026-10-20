@@ -1,0 +1,36 @@
+{
+  "extends": ["../../tsconfig", "@react-native/typescript-config"],
+  "compilerOptions": {
+    "lib": ["es2017", "DOM", "DOM.Iterable"],
+    "allowJs": true,
+    "baseUrl": "./",
+    "jsx": "react-native",
+    "noEmit": true,
+    "types": ["node", "jest", "detox"],
+    "paths": {
+      "@notesnook/*": ["../../packages"],
+      "@notifee/react-native": [
+        "./node_modules/@ammarahmed/notifee-react-native"
+      ],
+      "@notesnook/theme": ["../../packages/theme"],
+      "@notesnook/editor/dist/cjs/toolbar/tool-definitions": [
+        "../../packages/editor/dist/cjs/toolbar/tool-definitions.js"
+      ],
+      "@notesnook/editor/dist/cjs/toolbar/icons": [
+        "../../packages/editor/dist/cjs/toolbar/icons.js"
+      ],
+      "@notesnook/editor/dist/cjs/utils/font": [
+        "../../packages/editor/dist/cjs/utils/font.js"
+      ]
+    }
+  },
+  "exclude": [
+    "e2e",
+    "android",
+    "ios",
+    "node_modules",
+    "patches",
+    "fonts",
+    "./worker.js"
+  ]
+}

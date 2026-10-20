@@ -1,0 +1,29 @@
+# all
+build
+coverage
+node_modules
+dist
+
+# root
+resources/
+.*.*
+
+# mobile
+apps/mobile/native/
+apps/mobile/__tests__/
+apps/mobile/e2e/
+
+# web
+apps/web/public/an.js
+apps/web/src/common/sqlite/wa-sqlite-async.js
+apps/web/src/common/sqlite/wa-sqlite.js
+
+# editor
+packages/editor/styles/
+packages/editor/languages/
+
+# editor mobile
+packages/editor-mobile/build.bundle
+
+# snapshots
+tap-snapshots

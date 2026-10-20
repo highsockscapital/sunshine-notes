@@ -1,0 +1,867 @@
+diff --git a/node_modules/@tiptap/core/dist/index.cjs b/node_modules/@tiptap/core/dist/index.cjs
+index 61b4f6c..77e2367 100644
+--- a/node_modules/@tiptap/core/dist/index.cjs
++++ b/node_modules/@tiptap/core/dist/index.cjs
+@@ -304,45 +304,59 @@ function getNodeType(nameOrType, schema) {
+ }
+ 
+ function mergeAttributes(...objects) {
+-    return objects
+-        .filter(item => !!item)
+-        .reduce((items, item) => {
+-        const mergedAttributes = { ...items };
+-        Object.entries(item).forEach(([key, value]) => {
+-            const exists = mergedAttributes[key];
+-            if (!exists) {
+-                mergedAttributes[key] = value;
+-                return;
+-            }
+-            if (key === 'class') {
+-                const valueClasses = value ? value.split(' ') : [];
+-                const existingClasses = mergedAttributes[key] ? mergedAttributes[key].split(' ') : [];
+-                const insertClasses = valueClasses.filter(valueClass => !existingClasses.includes(valueClass));
+-                mergedAttributes[key] = [...existingClasses, ...insertClasses].join(' ');
+-            }
+-            else if (key === 'style') {
+-                mergedAttributes[key] = [mergedAttributes[key], value].join('; ');
+-            }
+-            else {
+-                mergedAttributes[key] = value;
+-            }
+-        });
+-        return mergedAttributes;
+-    }, {});
++  return objects.reduce((merged, obj) => {
++      if (!obj) return merged;
++
++      for (const key in obj) {
++          const value = obj[key];
++          if (!value) continue;
++
++          if (!merged[key]) {
++              merged[key] = value;
++              continue;
++          }
++
++          switch (key) {
++              case 'class': {
++                  const existingClasses = new Set(merged[key].split(' '));
++                  const newClasses = value.split(' ');
++                  for (const cls of newClasses) {
++                      existingClasses.add(cls);
++                  }
++                  merged[key] = Array.from(existingClasses).join(' ');
++                  break;
++              }
++              case 'style':
++                  merged[key] = `${merged[key]}; ${value}`;
++                  break;
++              default:
++                  merged[key] = value;
++          }
++      }
++      return merged;
++  }, {});
+ }
+ 
+ function getRenderedAttributes(nodeOrMark, extensionAttributes) {
+-    return extensionAttributes
+-        .filter(item => item.attribute.rendered)
+-        .map(item => {
+-        if (!item.attribute.renderHTML) {
+-            return {
+-                [item.name]: nodeOrMark.attrs[item.name],
+-            };
+-        }
+-        return item.attribute.renderHTML(nodeOrMark.attrs) || {};
+-    })
+-        .reduce((attributes, attribute) => mergeAttributes(attributes, attribute), {});
++  const attributesToMerge = [];
++
++  for (const item of extensionAttributes) {
++      if (!item.attribute.rendered) continue;
++
++      if (!item.attribute.renderHTML) {
++          attributesToMerge.push({
++              [item.name]: nodeOrMark.attrs[item.name]
++          });
++          continue;
++      }
++
++      const rendered = item.attribute.renderHTML(nodeOrMark.attrs);
++      if (rendered) {
++          attributesToMerge.push(rendered);
++      }
++  }
++
++  return mergeAttributes(...attributesToMerge);
+ }
+ 
+ function isFunction(value) {
+@@ -393,31 +407,33 @@ function fromString(value) {
+  * @param extensionAttributes List of attributes to inject
+  */
+ function injectExtensionAttributesToParseRule(parseRule, extensionAttributes) {
+-    if ('style' in parseRule) {
+-        return parseRule;
+-    }
+-    return {
+-        ...parseRule,
+-        getAttrs: (node) => {
+-            const oldAttributes = parseRule.getAttrs ? parseRule.getAttrs(node) : parseRule.attrs;
+-            if (oldAttributes === false) {
+-                return false;
+-            }
+-            const newAttributes = extensionAttributes.reduce((items, item) => {
+-                const value = item.attribute.parseHTML
+-                    ? item.attribute.parseHTML(node)
+-                    : fromString((node).getAttribute(item.name));
+-                if (value === null || value === undefined) {
+-                    return items;
+-                }
+-                return {
+-                    ...items,
+-                    [item.name]: value,
+-                };
+-            }, {});
+-            return { ...oldAttributes, ...newAttributes };
+-        },
+-    };
++  if ('style' in parseRule) {
++      return parseRule;
++  }
++  return {
++      ...parseRule,
++      getAttrs: (node) => {
++          const oldAttributes = parseRule.getAttrs ? parseRule.getAttrs(node) : parseRule.attrs;
++          if (oldAttributes === false) {
++              return false;
++          }
++          const newAttributes = extensionAttributes.reduce((items, item) => {
++              const value = item.attribute.parseHTML
++                  ? item.attribute.parseHTML(node)
++                  : fromString((node).getAttribute(item.name));
++              if (value === null || value === undefined) {
++                  return items;
++              }
++              items[item.name] = value;
++              return items;
++          }, Object.create(null));
++          for (const key in oldAttributes) {
++             if (newAttributes[key] !== undefined) continue;
++             newAttributes[key] = oldAttributes[key];
++          }
++          return newAttributes;
++      },
++  };
+ }
+ 
+ function cleanUpSchemaItem(data) {
+@@ -1466,7 +1482,7 @@ const cut = (originRange, targetPos) => ({ editor, tr }) => {
+     tr.deleteRange(originRange.from, originRange.to);
+     const newPos = tr.mapping.map(targetPos);
+     tr.insert(newPos, contentSlice.content);
+-    tr.setSelection(new state.TextSelection(tr.doc.resolve(newPos - 1)));
++    tr.setSelection(new state.TextSelection(tr.doc.resolve(Math.max(0, newPos - 1))));
+     return true;
+ };
+ 
+@@ -1726,24 +1742,11 @@ const insertContent = (value, options) => ({ tr, commands }) => {
+     return commands.insertContentAt({ from: tr.selection.from, to: tr.selection.to }, value, options);
+ };
+ 
+-const removeWhitespaces = (node) => {
+-    const children = node.childNodes;
+-    for (let i = children.length - 1; i >= 0; i -= 1) {
+-        const child = children[i];
+-        if (child.nodeType === 3 && child.nodeValue && /^(\n\s\s|\n)$/.test(child.nodeValue)) {
+-            node.removeChild(child);
+-        }
+-        else if (child.nodeType === 1) {
+-            removeWhitespaces(child);
+-        }
+-    }
+-    return node;
+-};
+ function elementFromString(value) {
+     // add a wrapper to preserve leading and trailing whitespace
+     const wrappedValue = `<body>${value}</body>`;
+     const html = new window.DOMParser().parseFromString(wrappedValue, 'text/html').body;
+-    return removeWhitespaces(html);
++    return html;
+ }
+ 
+ /**
+@@ -2120,8 +2123,21 @@ const lift = (typeOrName, attributes = {}) => ({ state, dispatch }) => {
+     return commands$1.lift(state, dispatch);
+ };
+ 
+-const liftEmptyBlock = () => ({ state, dispatch }) => {
+-    return commands$1.liftEmptyBlock(state, dispatch);
++const liftEmptyBlock = () => ({ state, dispatch, editor }) => {
++    return commands$1.liftEmptyBlock(state, tr => {
++        if (!dispatch) {
++            return true;
++        }
++        const { selection, storedMarks } = state;
++        const marks = storedMarks || (selection.$to.parentOffset && selection.$from.marks());
++        if (!marks) {
++            return dispatch(tr);
++        }
++        const { splittableMarks } = editor.extensionManager;
++        const filteredMarks = marks.filter(mark => splittableMarks.includes(mark.type.name));
++        tr.ensureMarks(filteredMarks);
++        return dispatch(tr);
++    });
+ };
+ 
+ const liftListItem = typeOrName => ({ state, dispatch }) => {
+@@ -3097,7 +3113,13 @@ const splitBlock = ({ keepMarks = true } = {}) => ({ tr, state: state$1, dispatc
+             if (selection instanceof state.TextSelection) {
+                 tr.deleteSelection();
+             }
+-            tr.split(tr.mapping.map($from.pos), 1, types);
++            const splitPos = tr.mapping.map($from.pos);
++            if (canSplit(tr.doc, splitPos, 1, types)) {
++                tr.split(splitPos, 1, types);
++            }
++            else if (canSplit(tr.doc, splitPos, 1)) {
++                tr.split(splitPos, 1);
++            }
+             if (deflt && !atEnd && !$from.parentOffset && $from.parent.type !== deflt) {
+                 const first = tr.mapping.map($from.before());
+                 const $first = tr.doc.resolve(first);
+@@ -3653,16 +3675,19 @@ const Keymap = Extension.create({
+             new state.Plugin({
+                 key: new state.PluginKey('clearDocument'),
+                 appendTransaction: (transactions, oldState, newState) => {
++                    const { empty, from, to } = oldState.selection;
++                    if (empty) {
++                        return;
++                    }
+                     const docChanges = transactions.some(transaction => transaction.docChanged)
+-                        && !oldState.doc.eq(newState.doc);
++                        && oldState.doc.nodeSize !== newState.doc.nodeSize;
+                     if (!docChanges) {
+                         return;
+                     }
+-                    const { empty, from, to } = oldState.selection;
+                     const allFrom = state.Selection.atStart(oldState.doc).from;
+                     const allEnd = state.Selection.atEnd(oldState.doc).to;
+                     const allWasSelected = from === allFrom && to === allEnd;
+-                    if (empty || !allWasSelected) {
++                    if (!allWasSelected) {
+                         return;
+                     }
+                     const isEmpty = newState.doc.textBetween(0, newState.doc.content.size, ' ', ' ').length === 0;
+@@ -4183,50 +4208,61 @@ class Editor extends EventEmitter {
+      * Creates a ProseMirror view.
+      */
+     createView() {
+-        let doc;
+-        try {
+-            doc = createDocument(this.options.content, this.schema, this.options.parseOptions, { errorOnInvalidContent: this.options.enableContentCheck });
+-        }
+-        catch (e) {
+-            if (!(e instanceof Error) || !['[tiptap error]: Invalid JSON content', '[tiptap error]: Invalid HTML content'].includes(e.message)) {
+-                // Not the content error we were expecting
+-                throw e;
+-            }
+-            this.emit('contentError', {
+-                editor: this,
+-                error: e,
+-                disableCollaboration: () => {
+-                    // To avoid syncing back invalid content, reinitialize the extensions without the collaboration extension
+-                    this.options.extensions = this.options.extensions.filter(extension => extension.name !== 'collaboration');
+-                    // Restart the initialization process by recreating the extension manager with the new set of extensions
+-                    this.createExtensionManager();
+-                },
+-            });
+-            // Content is invalid, but attempt to create it anyway, stripping out the invalid parts
+-            doc = createDocument(this.options.content, this.schema, this.options.parseOptions, { errorOnInvalidContent: false });
+-        }
+-        const selection = resolveFocusPosition(doc, this.options.autofocus);
+-        this.view = new view.EditorView(this.options.element, {
+-            ...this.options.editorProps,
+-            dispatchTransaction: this.dispatchTransaction.bind(this),
+-            state: state.EditorState.create({
+-                doc,
+-                selection: selection || undefined,
+-            }),
+-        });
+-        // `editor.view` is not yet available at this time.
+-        // Therefore we will add all plugins and node views directly afterwards.
+-        const newState = this.state.reconfigure({
+-            plugins: this.extensionManager.plugins,
+-        });
+-        this.view.updateState(newState);
+-        this.createNodeViews();
+-        this.prependClass();
+-        // Let’s store the editor instance in the DOM element.
+-        // So we’ll have access to it for tests.
+-        // @ts-ignore
+-        const dom = this.view.dom;
+-        dom.editor = this;
++      let selection = this.view && this.view.state.selection || undefined;
++      this.view = new EditorView(this.options.element, {
++          ...this.options.editorProps,
++          dispatchTransaction: this.dispatchTransaction.bind(this),
++          state: EditorState.create({
++              doc: this.schema.topNodeType.create(),
++          }),
++      });
++      let doc;
++      try {
++          doc = createDocument(this.options.content, this.schema, this.options.parseOptions, { errorOnInvalidContent: this.options.enableContentCheck });
++      }
++      catch (e) {
++          if (!(e instanceof Error) || !['[tiptap error]: Invalid JSON content', '[tiptap error]: Invalid HTML content'].includes(e.message)) {
++              // Not the content error we were expecting
++              throw e;
++          }
++          this.emit('contentError', {
++              editor: this,
++              error: e,
++              disableCollaboration: () => {
++                  // To avoid syncing back invalid content, reinitialize the extensions without the collaboration extension
++                  this.options.extensions = this.options.extensions.filter(extension => extension.name !== 'collaboration');
++                  // Restart the initialization process by recreating the extension manager with the new set of extensions
++                  this.createExtensionManager();
++              },
++          });
++          // Content is invalid, but attempt to create it anyway, stripping out the invalid parts
++          doc = createDocument(this.options.content, this.schema, this.options.parseOptions, { errorOnInvalidContent: false });
++      }
++      if (!selection) selection = resolveFocusPosition(doc, this.options.autofocus);
++      // `editor.view` is not yet available at this time.
++      // Therefore we will add all plugins and node views directly afterwards.
++      const newState = EditorState.create({
++          plugins: this.extensionManager.plugins,
++          doc,
++          selection:
++            selection &&
++            selection.from > 0 &&
++            selection.from <= doc.content.size &&
++            selection.to > 0 &&
++            selection.to <= doc.content.size
++              ? selection
++              : undefined
++      });
++      this.view.setProps({
++          state: newState,
++          nodeViews: this.extensionManager.nodeViews,
++      });
++      this.prependClass();
++      // Let’s store the editor instance in the DOM element.
++      // So we’ll have access to it for tests.
++      // @ts-ignore
++      const dom = this.view.dom;
++      dom.editor = this;
+     }
+     /**
+      * Creates all node views.
+diff --git a/node_modules/@tiptap/core/dist/index.js b/node_modules/@tiptap/core/dist/index.js
+index 03323f5..f391882 100644
+--- a/node_modules/@tiptap/core/dist/index.js
++++ b/node_modules/@tiptap/core/dist/index.js
+@@ -302,47 +302,62 @@ function getNodeType(nameOrType, schema) {
+ }
+ 
+ function mergeAttributes(...objects) {
+-    return objects
+-        .filter(item => !!item)
+-        .reduce((items, item) => {
+-        const mergedAttributes = { ...items };
+-        Object.entries(item).forEach(([key, value]) => {
+-            const exists = mergedAttributes[key];
+-            if (!exists) {
+-                mergedAttributes[key] = value;
+-                return;
+-            }
+-            if (key === 'class') {
+-                const valueClasses = value ? value.split(' ') : [];
+-                const existingClasses = mergedAttributes[key] ? mergedAttributes[key].split(' ') : [];
+-                const insertClasses = valueClasses.filter(valueClass => !existingClasses.includes(valueClass));
+-                mergedAttributes[key] = [...existingClasses, ...insertClasses].join(' ');
+-            }
+-            else if (key === 'style') {
+-                mergedAttributes[key] = [mergedAttributes[key], value].join('; ');
++    return objects.reduce((merged, obj) => {
++        if (!obj) return merged;
++
++        for (const key in obj) {
++            const value = obj[key];
++            if (!value) continue;
++
++            if (!merged[key]) {
++                merged[key] = value;
++                continue;
+             }
+-            else {
+-                mergedAttributes[key] = value;
++
++            switch (key) {
++                case 'class': {
++                    const existingClasses = new Set(merged[key].split(' '));
++                    const newClasses = value.split(' ');
++                    for (const cls of newClasses) {
++                        existingClasses.add(cls);
++                    }
++                    merged[key] = Array.from(existingClasses).join(' ');
++                    break;
++                }
++                case 'style':
++                    merged[key] = `${merged[key]}; ${value}`;
++                    break;
++                default:
++                    merged[key] = value;
+             }
+-        });
+-        return mergedAttributes;
++        }
++        return merged;
+     }, {});
+ }
+ 
+ function getRenderedAttributes(nodeOrMark, extensionAttributes) {
+-    return extensionAttributes
+-        .filter(item => item.attribute.rendered)
+-        .map(item => {
++    const attributesToMerge = [];
++
++    for (const item of extensionAttributes) {
++        if (!item.attribute.rendered) continue;
++
+         if (!item.attribute.renderHTML) {
+-            return {
+-                [item.name]: nodeOrMark.attrs[item.name],
+-            };
++            attributesToMerge.push({
++                [item.name]: nodeOrMark.attrs[item.name]
++            });
++            continue;
+         }
+-        return item.attribute.renderHTML(nodeOrMark.attrs) || {};
+-    })
+-        .reduce((attributes, attribute) => mergeAttributes(attributes, attribute), {});
++
++        const rendered = item.attribute.renderHTML(nodeOrMark.attrs);
++        if (rendered) {
++            attributesToMerge.push(rendered);
++        }
++    }
++
++    return mergeAttributes(...attributesToMerge);
+ }
+ 
++
+ function isFunction(value) {
+     return typeof value === 'function';
+ }
+@@ -390,33 +405,35 @@ function fromString(value) {
+  * @param parseRule ProseMirror ParseRule
+  * @param extensionAttributes List of attributes to inject
+  */
+-function injectExtensionAttributesToParseRule(parseRule, extensionAttributes) {
+-    if ('style' in parseRule) {
+-        return parseRule;
+-    }
+-    return {
+-        ...parseRule,
+-        getAttrs: (node) => {
+-            const oldAttributes = parseRule.getAttrs ? parseRule.getAttrs(node) : parseRule.attrs;
+-            if (oldAttributes === false) {
+-                return false;
+-            }
+-            const newAttributes = extensionAttributes.reduce((items, item) => {
+-                const value = item.attribute.parseHTML
+-                    ? item.attribute.parseHTML(node)
+-                    : fromString((node).getAttribute(item.name));
+-                if (value === null || value === undefined) {
+-                    return items;
+-                }
+-                return {
+-                    ...items,
+-                    [item.name]: value,
+-                };
+-            }, {});
+-            return { ...oldAttributes, ...newAttributes };
+-        },
+-    };
+-}
++ function injectExtensionAttributesToParseRule(parseRule, extensionAttributes) {
++     if ('style' in parseRule) {
++         return parseRule;
++     }
++     return {
++         ...parseRule,
++         getAttrs: (node) => {
++             const oldAttributes = parseRule.getAttrs ? parseRule.getAttrs(node) : parseRule.attrs;
++             if (oldAttributes === false) {
++                 return false;
++             }
++             const newAttributes = extensionAttributes.reduce((items, item) => {
++                 const value = item.attribute.parseHTML
++                     ? item.attribute.parseHTML(node)
++                     : fromString((node).getAttribute(item.name));
++                 if (value === null || value === undefined) {
++                     return items;
++                 }
++                 items[item.name] = value;
++                 return items;
++             }, Object.create(null));
++             for (const key in oldAttributes) {
++                if (newAttributes[key] !== undefined) continue;
++                newAttributes[key] = oldAttributes[key];
++             }
++             return newAttributes;
++         },
++     };
++ }
+ 
+ function cleanUpSchemaItem(data) {
+     return Object.fromEntries(
+@@ -1464,7 +1481,7 @@ const cut = (originRange, targetPos) => ({ editor, tr }) => {
+     tr.deleteRange(originRange.from, originRange.to);
+     const newPos = tr.mapping.map(targetPos);
+     tr.insert(newPos, contentSlice.content);
+-    tr.setSelection(new TextSelection(tr.doc.resolve(newPos - 1)));
++    tr.setSelection(new TextSelection(tr.doc.resolve(Math.max(0, newPos - 1))));
+     return true;
+ };
+ 
+@@ -1724,24 +1741,11 @@ const insertContent = (value, options) => ({ tr, commands }) => {
+     return commands.insertContentAt({ from: tr.selection.from, to: tr.selection.to }, value, options);
+ };
+ 
+-const removeWhitespaces = (node) => {
+-    const children = node.childNodes;
+-    for (let i = children.length - 1; i >= 0; i -= 1) {
+-        const child = children[i];
+-        if (child.nodeType === 3 && child.nodeValue && /^(\n\s\s|\n)$/.test(child.nodeValue)) {
+-            node.removeChild(child);
+-        }
+-        else if (child.nodeType === 1) {
+-            removeWhitespaces(child);
+-        }
+-    }
+-    return node;
+-};
+ function elementFromString(value) {
+     // add a wrapper to preserve leading and trailing whitespace
+     const wrappedValue = `<body>${value}</body>`;
+     const html = new window.DOMParser().parseFromString(wrappedValue, 'text/html').body;
+-    return removeWhitespaces(html);
++    return html;
+ }
+ 
+ /**
+@@ -2118,8 +2122,21 @@ const lift = (typeOrName, attributes = {}) => ({ state, dispatch }) => {
+     return lift$1(state, dispatch);
+ };
+ 
+-const liftEmptyBlock = () => ({ state, dispatch }) => {
+-    return liftEmptyBlock$1(state, dispatch);
++const liftEmptyBlock = () => ({ state, dispatch, editor }) => {
++    return liftEmptyBlock$1(state, tr => {
++        if (!dispatch) {
++            return true;
++        }
++        const { selection, storedMarks } = state;
++        const marks = storedMarks || (selection.$to.parentOffset && selection.$from.marks());
++        if (!marks) {
++            return dispatch(tr);
++        }
++        const { splittableMarks } = editor.extensionManager;
++        const filteredMarks = marks.filter(mark => splittableMarks.includes(mark.type.name));
++        tr.ensureMarks(filteredMarks);
++        return dispatch(tr);
++    });
+ };
+ 
+ const liftListItem = typeOrName => ({ state, dispatch }) => {
+@@ -3095,7 +3112,13 @@ const splitBlock = ({ keepMarks = true } = {}) => ({ tr, state, dispatch, editor
+             if (selection instanceof TextSelection) {
+                 tr.deleteSelection();
+             }
+-            tr.split(tr.mapping.map($from.pos), 1, types);
++            const splitPos = tr.mapping.map($from.pos);
++            if (canSplit(tr.doc, splitPos, 1, types)) {
++                tr.split(splitPos, 1, types);
++            }
++            else if (canSplit(tr.doc, splitPos, 1)) {
++                tr.split(splitPos, 1);
++            }
+             if (deflt && !atEnd && !$from.parentOffset && $from.parent.type !== deflt) {
+                 const first = tr.mapping.map($from.before());
+                 const $first = tr.doc.resolve(first);
+@@ -3651,16 +3674,19 @@ const Keymap = Extension.create({
+             new Plugin({
+                 key: new PluginKey('clearDocument'),
+                 appendTransaction: (transactions, oldState, newState) => {
++                    const { empty, from, to } = oldState.selection;
++                    if (empty) {
++                        return;
++                    }
+                     const docChanges = transactions.some(transaction => transaction.docChanged)
+-                        && !oldState.doc.eq(newState.doc);
++                        && oldState.doc.nodeSize !== newState.doc.nodeSize;
+                     if (!docChanges) {
+                         return;
+                     }
+-                    const { empty, from, to } = oldState.selection;
+                     const allFrom = Selection.atStart(oldState.doc).from;
+                     const allEnd = Selection.atEnd(oldState.doc).to;
+                     const allWasSelected = from === allFrom && to === allEnd;
+-                    if (empty || !allWasSelected) {
++                    if (!allWasSelected) {
+                         return;
+                     }
+                     const isEmpty = newState.doc.textBetween(0, newState.doc.content.size, ' ', ' ').length === 0;
+@@ -4181,6 +4207,14 @@ class Editor extends EventEmitter {
+      * Creates a ProseMirror view.
+      */
+     createView() {
++        let selection = this.view && this.view.state.selection || undefined;
++        this.view = new EditorView(this.options.element, {
++            ...this.options.editorProps,
++            dispatchTransaction: this.dispatchTransaction.bind(this),
++            state: EditorState.create({
++                doc: this.schema.topNodeType.create(),
++            }),
++        });
+         let doc;
+         try {
+             doc = createDocument(this.options.content, this.schema, this.options.parseOptions, { errorOnInvalidContent: this.options.enableContentCheck });
+@@ -4203,22 +4237,25 @@ class Editor extends EventEmitter {
+             // Content is invalid, but attempt to create it anyway, stripping out the invalid parts
+             doc = createDocument(this.options.content, this.schema, this.options.parseOptions, { errorOnInvalidContent: false });
+         }
+-        const selection = resolveFocusPosition(doc, this.options.autofocus);
+-        this.view = new EditorView(this.options.element, {
+-            ...this.options.editorProps,
+-            dispatchTransaction: this.dispatchTransaction.bind(this),
+-            state: EditorState.create({
+-                doc,
+-                selection: selection || undefined,
+-            }),
+-        });
++        if (!selection) selection = resolveFocusPosition(doc, this.options.autofocus);
+         // `editor.view` is not yet available at this time.
+         // Therefore we will add all plugins and node views directly afterwards.
+-        const newState = this.state.reconfigure({
++        const newState = EditorState.create({
+             plugins: this.extensionManager.plugins,
++            doc,
++            selection:
++              selection &&
++              selection.from > 0 &&
++              selection.from <= doc.content.size &&
++              selection.to > 0 &&
++              selection.to <= doc.content.size
++                ? selection
++                : undefined
++        });
++        this.view.setProps({
++            state: newState,
++            nodeViews: this.extensionManager.nodeViews,
+         });
+-        this.view.updateState(newState);
+-        this.createNodeViews();
+         this.prependClass();
+         // Let’s store the editor instance in the DOM element.
+         // So we’ll have access to it for tests.
+diff --git a/node_modules/@tiptap/core/dist/index.umd.js b/node_modules/@tiptap/core/dist/index.umd.js
+index d5ce8fd..987ef0b 100644
+--- a/node_modules/@tiptap/core/dist/index.umd.js
++++ b/node_modules/@tiptap/core/dist/index.umd.js
+@@ -389,7 +389,7 @@
+    * @param extensionAttributes List of attributes to inject
+    */
+   function injectExtensionAttributesToParseRule(parseRule, extensionAttributes) {
+-      if ('style' in parseRule) {
++      if ('style' in parseRule || (!parseRule.attrs && !parseRule.getAttrs && extensionAttributes.length === 0)) {
+           return parseRule;
+       }
+       return {
+@@ -406,12 +406,11 @@
+                   if (value === null || value === undefined) {
+                       return items;
+                   }
+-                  return {
+-                      ...items,
+-                      [item.name]: value,
+-                  };
+-              }, {});
+-              return { ...oldAttributes, ...newAttributes };
++                  // @ts-expect-error for perf reasons
++                  items[item.name] = value;
++                  return items;
++              }, oldAttributes || {});
++              return newAttributes;
+           },
+       };
+   }
+@@ -1462,7 +1461,7 @@
+       tr.deleteRange(originRange.from, originRange.to);
+       const newPos = tr.mapping.map(targetPos);
+       tr.insert(newPos, contentSlice.content);
+-      tr.setSelection(new state.TextSelection(tr.doc.resolve(newPos - 1)));
++      tr.setSelection(new state.TextSelection(tr.doc.resolve(Math.max(0, newPos - 1))));
+       return true;
+   };
+ 
+@@ -1722,24 +1721,11 @@
+       return commands.insertContentAt({ from: tr.selection.from, to: tr.selection.to }, value, options);
+   };
+ 
+-  const removeWhitespaces = (node) => {
+-      const children = node.childNodes;
+-      for (let i = children.length - 1; i >= 0; i -= 1) {
+-          const child = children[i];
+-          if (child.nodeType === 3 && child.nodeValue && /^(\n\s\s|\n)$/.test(child.nodeValue)) {
+-              node.removeChild(child);
+-          }
+-          else if (child.nodeType === 1) {
+-              removeWhitespaces(child);
+-          }
+-      }
+-      return node;
+-  };
+   function elementFromString(value) {
+       // add a wrapper to preserve leading and trailing whitespace
+       const wrappedValue = `<body>${value}</body>`;
+       const html = new window.DOMParser().parseFromString(wrappedValue, 'text/html').body;
+-      return removeWhitespaces(html);
++      return html;
+   }
+ 
+   /**
+@@ -2116,8 +2102,21 @@
+       return commands$1.lift(state, dispatch);
+   };
+ 
+-  const liftEmptyBlock = () => ({ state, dispatch }) => {
+-      return commands$1.liftEmptyBlock(state, dispatch);
++  const liftEmptyBlock = () => ({ state, dispatch, editor }) => {
++      return commands$1.liftEmptyBlock(state, tr => {
++          if (!dispatch) {
++              return true;
++          }
++          const { selection, storedMarks } = state;
++          const marks = storedMarks || (selection.$to.parentOffset && selection.$from.marks());
++          if (!marks) {
++              return dispatch(tr);
++          }
++          const { splittableMarks } = editor.extensionManager;
++          const filteredMarks = marks.filter(mark => splittableMarks.includes(mark.type.name));
++          tr.ensureMarks(filteredMarks);
++          return dispatch(tr);
++      });
+   };
+ 
+   const liftListItem = typeOrName => ({ state, dispatch }) => {
+@@ -3093,7 +3092,13 @@
+               if (selection instanceof state.TextSelection) {
+                   tr.deleteSelection();
+               }
+-              tr.split(tr.mapping.map($from.pos), 1, types);
++              const splitPos = tr.mapping.map($from.pos);
++              if (canSplit(tr.doc, splitPos, 1, types)) {
++                tr.split(splitPos, 1, types);
++              }
++              else if (canSplit(tr.doc, splitPos, 1)) {
++                tr.split(splitPos, 1);
++              }
+               if (deflt && !atEnd && !$from.parentOffset && $from.parent.type !== deflt) {
+                   const first = tr.mapping.map($from.before());
+                   const $first = tr.doc.resolve(first);
+@@ -3649,16 +3654,19 @@
+               new state.Plugin({
+                   key: new state.PluginKey('clearDocument'),
+                   appendTransaction: (transactions, oldState, newState) => {
++                      const { empty, from, to } = oldState.selection;
++                      if (empty) {
++                          return;
++                      }
+                       const docChanges = transactions.some(transaction => transaction.docChanged)
+-                          && !oldState.doc.eq(newState.doc);
++                          && oldState.doc.nodeSize !== newState.doc.nodeSize;
+                       if (!docChanges) {
+                           return;
+                       }
+-                      const { empty, from, to } = oldState.selection;
+                       const allFrom = state.Selection.atStart(oldState.doc).from;
+                       const allEnd = state.Selection.atEnd(oldState.doc).to;
+                       const allWasSelected = from === allFrom && to === allEnd;
+-                      if (empty || !allWasSelected) {
++                      if (!allWasSelected) {
+                           return;
+                       }
+                       const isEmpty = newState.doc.textBetween(0, newState.doc.content.size, ' ', ' ').length === 0;
+@@ -4179,6 +4187,13 @@ img.ProseMirror-separator {
+        * Creates a ProseMirror view.
+        */
+       createView() {
++          this.view = new view.EditorView(this.options.element, {
++              ...this.options.editorProps,
++              dispatchTransaction: this.dispatchTransaction.bind(this),
++              state: state.EditorState.create({
++                  doc: this.schema.topNodeType.create(),
++              }),
++          });
+           let doc;
+           try {
+               doc = createDocument(this.options.content, this.schema, this.options.parseOptions, { errorOnInvalidContent: this.options.enableContentCheck });
+@@ -4201,22 +4216,18 @@ img.ProseMirror-separator {
+               // Content is invalid, but attempt to create it anyway, stripping out the invalid parts
+               doc = createDocument(this.options.content, this.schema, this.options.parseOptions, { errorOnInvalidContent: false });
+           }
+-          const selection = resolveFocusPosition(doc, this.options.autofocus);
+-          this.view = new view.EditorView(this.options.element, {
+-              ...this.options.editorProps,
+-              dispatchTransaction: this.dispatchTransaction.bind(this),
+-              state: state.EditorState.create({
+-                  doc,
+-                  selection: selection || undefined,
+-              }),
+-          });
++          const selection = resolveFocusPosition(doc, this.options.autofocus) || undefined;
+           // `editor.view` is not yet available at this time.
+           // Therefore we will add all plugins and node views directly afterwards.
+-          const newState = this.state.reconfigure({
++          const newState = state.EditorState.create({
+               plugins: this.extensionManager.plugins,
++              doc,
++              selection,
++          });
++          this.view.setProps({
++              state: newState,
++              nodeViews: this.extensionManager.nodeViews,
+           });
+-          this.view.updateState(newState);
+-          this.createNodeViews();
+           this.prependClass();
+           // Let’s store the editor instance in the DOM element.
+           // So we’ll have access to it for tests.
+diff --git a/node_modules/@tiptap/core/dist/packages/core/src/Editor.d.ts b/node_modules/@tiptap/core/dist/packages/core/src/Editor.d.ts
+index 5a63966..37282fe 100644
+--- a/node_modules/@tiptap/core/dist/packages/core/src/Editor.d.ts
++++ b/node_modules/@tiptap/core/dist/packages/core/src/Editor.d.ts
+@@ -6,6 +6,7 @@ import { ExtensionManager } from './ExtensionManager.js';
+ import { NodePos } from './NodePos.js';
+ import { CanCommands, ChainedCommands, EditorEvents, EditorOptions, JSONContent, SingleCommands, TextSerializer } from './types.js';
+ export * as extensions from './extensions/index.js';
++export interface EditorStorage extends Record<string, any> { }
+ export interface TiptapEditorHTMLElement extends HTMLElement {
+     editor?: Editor;
+ }
+@@ -26,7 +27,7 @@ export declare class Editor extends EventEmitter<EditorEvents> {
+     /**
+      * Returns the editor storage.
+      */
+-    get storage(): Record<string, any>;
++    get storage(): EditorStorage;
+     /**
+      * An object of all registered commands.
+      */

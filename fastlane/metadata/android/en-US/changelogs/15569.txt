@@ -1,0 +1,4 @@
+- Add option to clear note version history
+- Minor bug fixes and improvements
+
+Thank you for using Notesnook!

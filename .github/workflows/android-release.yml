@@ -1,0 +1,112 @@
+name: Release Sunshine Notes Android
+
+on:
+  push:
+    tags:
+      - "*-android"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (without the -android suffix)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      NDK_CCACHE: ccache
+      USE_CCACHE: 1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: ./.github/actions/setup-node-with-cache
+
+      - name: Use specific Java version for the builds
+        uses: joschi/setup-jdk@v2
+        with:
+          java-version: "17"
+          architecture: "x64"
+
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: false
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Install node modules
+        run: |
+          npm ci --ignore-scripts --prefer-offline --no-audit
+          npm run bootstrap -- --scope=mobile
+
+      - name: Make Gradlew Executable
+        run: cd apps/mobile/android && chmod +x ./gradlew
+
+      - name: Build shared packages
+        run: npm run tx mobile:build
+
+      - name: Check for typescript errors
+        run: |
+          cd apps/mobile
+          npx tsc --noEmit
+
+      - name: Build release APKs
+        run: |
+          cd apps/mobile/android
+          ENVFILE=.env.public ./gradlew assembleRelease --no-daemon
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME%-android}"
+          fi
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "Releasing version $version"
+
+      - name: Rename APKs
+        run: |
+          set -euo pipefail
+          cd apps/mobile/android/app/build/outputs/apk/release
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            if [ -f "app-$abi-release.apk" ]; then
+              mv "app-$abi-release.apk" "sunshinenotes-$abi.apk"
+            fi
+          done
+          ls -la *.apk
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          tag_name: ${{ steps.version.outputs.version }}-android
+          name: Sunshine Notes Android v${{ steps.version.outputs.version }}
+          body: |
+            Sunshine Notes v${{ steps.version.outputs.version }}
+
+            - Local-only build, no account and no sync
+            - Sunshine branding, palette and Screenshot mode
+          files: |
+            apps/mobile/android/app/build/outputs/apk/release/sunshinenotes-arm64-v8a.apk
+            apps/mobile/android/app/build/outputs/apk/release/sunshinenotes-armeabi-v7a.apk
+            apps/mobile/android/app/build/outputs/apk/release/sunshinenotes-x86.apk
+            apps/mobile/android/app/build/outputs/apk/release/sunshinenotes-x86_64.apk
+          token: ${{ secrets.GITHUB_TOKEN }}

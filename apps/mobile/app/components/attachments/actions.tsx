@@ -1,0 +1,429 @@
+/*
+This file is part of the Notesnook project (https://notesnook.com/)
+
+Copyright (C) 2023 Streetwriters (Private) Limited
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+import { formatBytes } from "@notesnook/common";
+import { Attachment, Note, VirtualizedGrouping } from "@notesnook/core";
+import { useThemeColors } from "@notesnook/theme";
+import Clipboard from "@react-native-clipboard/clipboard";
+import React, { RefObject, useEffect, useState } from "react";
+import { TextInput, View } from "react-native";
+import { ActionSheetRef } from "react-native-actions-sheet";
+import { ScrollView } from "react-native-gesture-handler";
+import { db } from "../../common/database";
+import filesystem from "../../common/filesystem";
+import downloadAttachment from "../../common/filesystem/download-attachment";
+import { useAttachmentProgress } from "../../hooks/use-attachment-progress";
+import picker from "../../screens/editor/tiptap/picker";
+import { useTabStore } from "../../screens/editor/tiptap/use-tab-store";
+import { editorController } from "../../screens/editor/tiptap/utils";
+import {
+  ToastManager,
+  eSendEvent,
+  presentSheet
+} from "../../services/event-manager";
+import { useAttachmentStore } from "../../stores/use-attachment-store";
+import {
+  eCloseAttachmentDialog,
+  eCloseSheet,
+  eDBItemUpdate,
+  eOnLoadNote
+} from "../../utils/events";
+import { AppFontSize } from "../../utils/size";
+import { Dialog } from "../dialog";
+import { presentDialog } from "../dialog/functions";
+import { openNote } from "../list-items/note/wrapper";
+import { DateMeta } from "../properties/date-meta";
+import SheetProvider from "../sheet-provider";
+import { Button } from "../ui/button";
+import { Notice } from "../ui/notice";
+import { Pressable } from "../ui/pressable";
+import Heading from "../ui/typography/heading";
+import Paragraph from "../ui/typography/paragraph";
+import { strings } from "@notesnook/intl";
+import { DefaultAppStyles } from "../../utils/styles";
+import Navigation from "../../services/navigation";
+import { createFormRef, validators } from "../ui/input/form-input";
+
+const Actions = ({
+  attachment,
+  close,
+  setAttachments,
+  fwdRef,
+  context
+}: {
+  attachment: Attachment;
+  context: string;
+  setAttachments: (attachments?: VirtualizedGrouping<Attachment>) => void;
+  close?: () => void;
+  fwdRef: RefObject<ActionSheetRef>;
+}) => {
+  const { colors } = useThemeColors();
+  const contextId = attachment.hash;
+  const [filename, setFilename] = useState(attachment.filename);
+  const [currentProgress] = useAttachmentProgress(attachment);
+  const [failed, setFailed] = useState<string | undefined>(attachment.failed);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [loading, setLoading] = useState<{
+    name?: string;
+  }>({});
+  const actions = [
+    {
+      name: strings.network.download(),
+      onPress: async () => {
+        if (currentProgress) {
+          await db.fs().cancel(attachment.hash);
+          useAttachmentStore.getState().remove(attachment.hash);
+        }
+        downloadAttachment(attachment.hash, context === "global");
+        fwdRef.current?.hide();
+      },
+      icon: "download"
+    },
+    {
+      name: strings.network.reupload(),
+      onPress: async () => {
+        await picker.pick({
+          reupload: true,
+          hash: attachment.hash,
+          context: contextId,
+          type: attachment.mimeType.startsWith("image") ? "image" : "file"
+        });
+      },
+      icon: "upload"
+    },
+    {
+      name: strings.fileCheck(),
+      onPress: async () => {
+        setLoading({
+          name: strings.fileCheck()
+        });
+        const result = await filesystem.checkAttachment(attachment.hash);
+        if (!result) return;
+
+        if (result.failed) {
+          db.attachments.markAsFailed(attachment.id, result.failed);
+          setFailed(result.failed);
+          ToastManager.show({
+            heading: strings.fileCheckFailed(result.failed),
+            type: "error",
+            context: "local"
+          });
+        } else {
+          setFailed(undefined);
+          db.attachments.markAsFailed(attachment.id);
+          eSendEvent(eDBItemUpdate, attachment.id);
+          ToastManager.show({
+            heading: strings.fileCheckPassed(),
+            type: "success",
+            context: "local"
+          });
+        }
+
+        setAttachments();
+        setLoading({
+          name: undefined
+        });
+      },
+      icon: "file-check"
+    },
+    {
+      name: strings.rename(),
+      onPress: () => {
+        close?.();
+        setTimeout(() => {
+          presentDialog({
+            title: strings.renameFile(),
+            form: {
+              formRef: createFormRef({
+                name: attachment.filename
+              }),
+              items: [
+                {
+                  name: "name",
+                  defaultValue: attachment.filename,
+                  placeholder: strings.enterTitle(),
+                  ref: React.createRef<TextInput | null>(),
+                  validators: [validators.required(strings.nameIsRequired())]
+                }
+              ],
+              onFormSubmit: async (form) => {
+                try {
+                  const value = form.getValue("name");
+                  await db.attachments.add({
+                    hash: attachment.hash,
+                    filename: value
+                  });
+                  setFilename(value);
+                  setAttachments();
+                  eSendEvent(eDBItemUpdate, attachment.id);
+                  ToastManager.show({
+                    message: `Attachment renamed to ${value}`,
+                    type: "success"
+                  });
+
+                  return true;
+                } catch (e) {
+                  form.setError("name", (e as Error).message);
+                  return false;
+                }
+              }
+            },
+            positiveText: strings.rename()
+          });
+        }, 500);
+      },
+      icon: "form-textbox"
+    },
+    {
+      name: strings.delete(),
+      onPress: async () => {
+        close?.();
+        setTimeout(() => {
+          presentDialog({
+            title: strings.deleteAttachment(),
+            paragraph: strings.deleteAttachmentConfirm(),
+            positiveText: strings.yes(),
+            negativeText: strings.no(),
+            positiveType: "errorShade",
+            positivePress: async () => {
+              try {
+                const relations = await db.relations
+                  .to(attachment, "note")
+                  .get();
+                await db.attachments.remove(attachment.hash, false);
+                ToastManager.show({
+                  type: "success",
+                  message: strings.attachmentDeleted()
+                });
+                setAttachments();
+                eSendEvent(eDBItemUpdate, attachment.id);
+                relations
+                  .map((relation) => relation.fromId)
+                  .forEach(async (id) => {
+                    useTabStore.getState().forEachNoteTab(id, async (tab) => {
+                      const isFocused =
+                        useTabStore.getState().currentTab === tab.id;
+                      if (isFocused) {
+                        eSendEvent(eOnLoadNote, {
+                          item: await db.notes.note(id),
+                          forced: true
+                        });
+                      } else {
+                        editorController.current.commands.setLoading(
+                          true,
+                          tab.id
+                        );
+                      }
+                    });
+                  });
+                return true;
+              } catch (e) {
+                return false;
+              }
+            }
+          });
+        }, 500);
+      },
+      icon: "delete-outline"
+    }
+  ];
+
+  useEffect(() => {
+    db.relations
+      .to(attachment, "note")
+      .selector.items()
+      .then((items) => {
+        setNotes(items);
+      });
+  }, [attachment]);
+
+  return (
+    <ScrollView
+      onMomentumScrollEnd={() => {
+        fwdRef?.current?.handleChildScrollEnd();
+      }}
+      nestedScrollEnabled={true}
+      style={{
+        maxHeight: "100%"
+      }}
+      keyboardShouldPersistTaps="never"
+    >
+      <Dialog context={contextId} />
+      <SheetProvider context={contextId} />
+      <View
+        style={{
+          borderBottomWidth: 1,
+          borderBottomColor: colors.primary.border,
+          marginBottom:
+            notes && notes.length > 0 ? 0 : DefaultAppStyles.GAP_VERTICAL
+        }}
+      >
+        <Heading
+          style={{
+            paddingHorizontal: DefaultAppStyles.GAP
+          }}
+          size={AppFontSize.lg}
+        >
+          {filename}
+        </Heading>
+
+        <View
+          style={{
+            flexDirection: "row",
+            marginBottom: DefaultAppStyles.GAP_VERTICAL,
+            paddingHorizontal: DefaultAppStyles.GAP,
+            marginTop: DefaultAppStyles.GAP_VERTICAL_SMALL,
+            gap: 10
+          }}
+        >
+          <Paragraph size={AppFontSize.xs} color={colors.secondary.paragraph}>
+            {attachment.mimeType}
+          </Paragraph>
+          <Paragraph size={AppFontSize.xs} color={colors.secondary.paragraph}>
+            {formatBytes(attachment.size)}
+          </Paragraph>
+
+          {notes.length ? (
+            <Paragraph size={AppFontSize.xs} color={colors.secondary.paragraph}>
+              {strings.notes(notes.length)}
+            </Paragraph>
+          ) : null}
+          <Paragraph
+            onPress={() => {
+              Clipboard.setString(attachment.hash);
+              ToastManager.show({
+                type: "success",
+                heading: strings.hashCopied(),
+                context: "local"
+              });
+            }}
+            size={AppFontSize.xs}
+            color={colors.secondary.paragraph}
+          >
+            {attachment.hash}
+          </Paragraph>
+        </View>
+
+        <DateMeta item={attachment} />
+      </View>
+
+      {notes && notes.length > 0 ? (
+        <View
+          style={{
+            borderBottomWidth: 1,
+            borderBottomColor: colors.primary.border,
+            marginBottom: DefaultAppStyles.GAP_VERTICAL,
+            paddingVertical: DefaultAppStyles.GAP_VERTICAL
+          }}
+        >
+          <>
+            <Heading
+              style={{
+                paddingHorizontal: DefaultAppStyles.GAP
+              }}
+              size={AppFontSize.sm}
+            >
+              {strings.listOf()} {strings.dataTypesPlural.note()}:
+            </Heading>
+
+            {notes.map((item) => (
+              <Pressable
+                onPress={async () => {
+                  eSendEvent(eCloseSheet, contextId);
+                  close?.();
+                  eSendEvent(eCloseAttachmentDialog);
+                  Navigation.navigate("FluidPanelsView");
+                  openNote(item, (item as any).type === "trash");
+                }}
+                style={{
+                  paddingVertical: DefaultAppStyles.GAP_VERTICAL,
+                  alignItems: "flex-start",
+
+                  paddingHorizontal: DefaultAppStyles.GAP
+                }}
+                key={item.id}
+              >
+                <Paragraph size={AppFontSize.xs}>{item.title}</Paragraph>
+              </Pressable>
+            ))}
+          </>
+        </View>
+      ) : null}
+
+      {actions.map((item) => (
+        <Button
+          key={item.name}
+          buttonType={{
+            text:
+              item.name === "Delete"
+                ? colors.error.paragraph
+                : colors.primary.paragraph
+          }}
+          onPress={item.onPress}
+          title={item.name}
+          icon={item.icon}
+          loading={loading?.name === item.name}
+          type="plain"
+          fontSize={AppFontSize.sm}
+          style={{
+            borderRadius: 0,
+            justifyContent: "flex-start",
+            alignSelf: "flex-start",
+            width: "100%"
+          }}
+        />
+      ))}
+
+      <View
+        style={{
+          paddingHorizontal: DefaultAppStyles.GAP
+        }}
+      >
+        {failed ? (
+          <Notice
+            type="alert"
+            text={strings.fileCheckFailed(failed)}
+            size="small"
+          />
+        ) : null}
+      </View>
+    </ScrollView>
+  );
+};
+
+Actions.present = (
+  attachment: Attachment,
+  set: (attachments?: VirtualizedGrouping<Attachment>) => void,
+  context?: string
+) => {
+  presentSheet({
+    context: context,
+    component: (ref, close) => (
+      <Actions
+        fwdRef={ref}
+        setAttachments={set}
+        close={close}
+        attachment={attachment}
+        context={context || "global"}
+      />
+    )
+  });
+};
+
+export default Actions;

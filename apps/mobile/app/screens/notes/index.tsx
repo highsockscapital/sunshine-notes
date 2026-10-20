@@ -1,0 +1,241 @@
+/*
+This file is part of the Notesnook project (https://notesnook.com/)
+
+Copyright (C) 2023 Streetwriters (Private) Limited
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+import { resolveItems } from "@notesnook/common";
+import { Color, Note, Tag, VirtualizedGrouping } from "@notesnook/core";
+import { strings } from "@notesnook/intl";
+import React, { useEffect, useRef, useState } from "react";
+import { db } from "../../common/database";
+import { FloatingButton } from "../../components/container/floating-button";
+import DelayLayout from "../../components/delay-layout";
+import { Header } from "../../components/header";
+import List from "../../components/list";
+import { PlaceholderData } from "../../components/list/empty";
+import SelectionHeader from "../../components/selection-header";
+import { useNavigationFocus } from "../../hooks/use-navigation-focus";
+import {
+  eSubscribeEvent,
+  eUnSubscribeEvent
+} from "../../services/event-manager";
+import Navigation, { NavigationProps } from "../../services/navigation";
+import useNavigationStore, {
+  HeaderRightButton,
+  NotesScreenParams,
+  RouteName
+} from "../../stores/use-navigation-store";
+import { useSettingStore } from "../../stores/use-setting-store";
+import { rootNavigatorRef } from "../../utils/global-refs";
+import { setOnFirstSave } from "./common";
+
+export interface RouteProps<T extends RouteName> extends NavigationProps<T> {
+  get: (
+    params: NotesScreenParams,
+    grouped?: boolean
+  ) => Promise<VirtualizedGrouping<Note> | Note[]>;
+  placeholder: PlaceholderData;
+  onPressFloatingButton: () => void;
+  focusControl?: boolean;
+  canGoBack?: boolean;
+  rightButtons?: (params: NotesScreenParams) => HeaderRightButton[];
+}
+
+function getItemType(routeName: RouteName) {
+  if (routeName === "TaggedNotes") return "tag";
+  if (routeName === "ColoredNotes") return "color";
+  return "note";
+}
+
+const NotesPage = ({
+  route,
+  navigation,
+  get,
+  placeholder,
+  onPressFloatingButton,
+  focusControl = true,
+  rightButtons
+}: RouteProps<"NotesPage" | "TaggedNotes" | "ColoredNotes">) => {
+  const params = useRef<NotesScreenParams>(route?.params);
+  const [notes, setNotes] = useState<VirtualizedGrouping<Note>>();
+  const [loadingNotes, setLoadingNotes] = useState(true);
+  const [item, setItem] = useState<Tag | Color | undefined>(
+    params.current.item
+  );
+  const title = item?.type === "tag" ? "#" + item?.title : item?.title;
+  const accentColor =
+    route.name === "ColoredNotes" ? (item as Color)?.colorCode : undefined;
+  const updateOnFocus = useRef(false);
+  const isAppLoading = useSettingStore((state) => state.isAppLoading);
+  const isFocused = useNavigationFocus(navigation, {
+    onFocus: (prev) => {
+      if (updateOnFocus.current) {
+        onRequestUpdate();
+        updateOnFocus.current = false;
+      } else {
+        Navigation.routeNeedsUpdate(route.name, onRequestUpdate);
+      }
+      syncWithNavigation();
+      if (focusControl) return !prev.current;
+      return false;
+    },
+    onBlur: () => {
+      updateOnFocus.current = false;
+      setOnFirstSave(null);
+      return false;
+    },
+    focusOnInit: !focusControl
+  });
+
+  const syncWithNavigation = React.useCallback(() => {
+    const { id } = params.current;
+    useNavigationStore.getState().setFocusedRouteId(id || route.name);
+
+    setOnFirstSave({
+      type: getItemType(route.name),
+      id: id
+    });
+  }, [route.name]);
+
+  const onRequestUpdate = React.useCallback(
+    async (data?: NotesScreenParams) => {
+      if (useSettingStore.getState().isAppLoading) return;
+
+      if (
+        params.current.id &&
+        useNavigationStore.getState().focusedRouteId !== params.current.id &&
+        !data
+      ) {
+        updateOnFocus.current = false;
+        return;
+      }
+
+      const isNew = data && data?.id !== params.current?.id;
+      if (data) params.current = data;
+
+      try {
+        if (isNew) setLoadingNotes(true);
+        const notes = (await get(
+          params.current,
+          true
+        )) as VirtualizedGrouping<Note>;
+
+        if (route.name === "TaggedNotes" || route.name === "ColoredNotes") {
+          const item = await (db as any)[params.current.type + "s"][
+            params.current.type
+          ](params.current.id);
+
+          if (!item) {
+            if (rootNavigatorRef.canGoBack()) {
+              Navigation.goBack();
+            } else {
+              Navigation.navigate("Notes");
+            }
+            return;
+          }
+          setItem(item);
+          params.current.item = item;
+        }
+
+        if (notes.placeholders.length === 0) setLoadingNotes(false);
+        setNotes(notes);
+        await notes.item(0, resolveItems);
+        setLoadingNotes(false);
+        syncWithNavigation();
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [get, route.name, syncWithNavigation]
+  );
+
+  useEffect(() => {
+    if (isAppLoading) return;
+    if (loadingNotes) {
+      onRequestUpdate(params.current);
+    }
+  }, [loadingNotes, get, isAppLoading, onRequestUpdate]);
+
+  useEffect(() => {
+    eSubscribeEvent(route.name, onRequestUpdate);
+    return () => {
+      setOnFirstSave(null);
+      eUnSubscribeEvent(route.name, onRequestUpdate);
+    };
+  }, [onRequestUpdate, route.name]);
+
+  return (
+    <>
+      <Header
+        renderedInRoute={route.name}
+        title={title}
+        canGoBack={params?.current?.canGoBack}
+        hasSearch={true}
+        id={params?.current?.id}
+        onSearch={() => {
+          if (!item) return;
+
+          const selector = db.relations.from(item, "note").selector;
+
+          if (!selector) return;
+
+          Navigation.push("Search", {
+            placeholder: strings.searchInRoute(title || route.name),
+            type: "note",
+            title: title!,
+            route: route.name,
+            items: selector
+          });
+        }}
+        onPressDefaultRightButton={onPressFloatingButton}
+      />
+
+      <DelayLayout color={accentColor} wait={loadingNotes}>
+        <List
+          data={notes}
+          dataType="note"
+          groupType="notes"
+          onRefresh={onRequestUpdate}
+          loading={false}
+          renderedInRoute={route.name}
+          id={params.current?.id}
+          type={params.current?.item?.type}
+          headerTitle={title}
+          customAccentColor={accentColor}
+          placeholder={placeholder}
+        />
+
+        {(notes?.placeholders && (notes?.placeholders?.length || 0) > 0) ||
+        isFocused ? (
+          <FloatingButton
+            color={accentColor}
+            onPress={onPressFloatingButton}
+            alwaysVisible
+          />
+        ) : null}
+      </DelayLayout>
+      <SelectionHeader
+        id={route.params?.id || route.name}
+        items={notes}
+        type="note"
+        renderedInRoute={route.name}
+      />
+    </>
+  );
+};
+
+export default NotesPage;
