@@ -589,7 +589,7 @@ const Tiptap = ({
             paddingTop: "12px"
           }}
         >
-          {settings.noHeader || tab.session?.locked ? null : (
+          {tab.session?.locked ? null : (
             <>
               <div
                 style={{

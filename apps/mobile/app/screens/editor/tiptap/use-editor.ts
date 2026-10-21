@@ -50,6 +50,7 @@ import Navigation from "../../../services/navigation";
 import { NotePreviewWidget } from "../../../services/note-preview-widget";
 import Notifications from "../../../services/notifications";
 import SettingsService from "../../../services/settings";
+import { useScreenshotModeStore } from "../../../stores/use-screenshot-mode-store";
 import { useSettingStore } from "../../../stores/use-setting-store";
 import { useTagStore } from "../../../stores/use-tag-store";
 import {
@@ -157,6 +158,9 @@ export const useEditor = (
   const tags = useTagStore((state) => state.items);
   const insets = useGlobalSafeAreaInsets();
   const isDefaultEditor = editorId === "";
+  // in screenshot mode the note is flush with the screen, so the editor
+  // must not reserve room for the system bars
+  const screenshotMode = useScreenshotModeStore((state) => state.enabled);
   const saveCount = useRef<Record<string, number>>({});
   const lastContentChangeTime = useRef<Record<string, number>>({});
   const lock = useRef(false);
@@ -181,9 +185,11 @@ export const useEditor = (
 
   useEffect(() => {
     commands.setInsets(
-      isDefaultEditor ? insets : { top: 0, left: 0, right: 0, bottom: 0 }
+      isDefaultEditor && !screenshotMode
+        ? insets
+        : { top: 0, left: 0, right: 0, bottom: 0 }
     );
-  }, [commands, insets, isDefaultEditor]);
+  }, [commands, insets, isDefaultEditor, screenshotMode]);
 
   useEffect(() => {
     postMessage(NativeEvents.theme, theme);
@@ -1123,7 +1129,9 @@ export const useEditor = (
       postMessage(NativeEvents.theme, theme);
     });
     commands.setInsets(
-      isDefaultEditor ? insets : { top: 0, left: 0, right: 0, bottom: 0 }
+      isDefaultEditor && !screenshotMode
+        ? insets
+        : { top: 0, left: 0, right: 0, bottom: 0 }
     );
     await commands.setSettings();
 
@@ -1177,6 +1185,7 @@ export const useEditor = (
     commands,
     isDefaultEditor,
     insets,
+    screenshotMode,
     postMessage,
     theme,
     overlay,

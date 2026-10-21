@@ -17,7 +17,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-import { Box, Flex, Text } from "@theme-ui/components";
+import { Box, Button, Flex, Text } from "@theme-ui/components";
 import { useEffect, useState } from "react";
 import { Popup } from "../components/popup.js";
 import { useIsMobile } from "../stores/toolbar-store.js";
@@ -33,7 +33,7 @@ type CellLocation = { column: number; row: number };
 type TableSize = { columns: number; rows: number };
 
 export type TablePopupProps = {
-  onInsertTable: (size: TableSize) => void;
+  onInsertTable: (size: TableSize, numbered: boolean) => void;
 };
 export function TablePopup(props: TablePopupProps) {
   const isMobile = useIsMobile();
@@ -41,6 +41,7 @@ export function TablePopup(props: TablePopupProps) {
   const cellSize = isMobile ? 30 : 15;
 
   const { onInsertTable } = props;
+  const [numbered, setNumbered] = useState(false);
   const [cellLocation, setCellLocation] = useState<CellLocation>({
     column: 0,
     row: 0
@@ -78,18 +79,46 @@ export function TablePopup(props: TablePopupProps) {
         title:
           !cellLocation.column || !cellLocation.row
             ? strings.setTableSizeNotice()
-            : strings.insertTableOfSize(cellLocation.row, cellLocation.column),
+            : numbered
+              ? strings.insertNumberedTableOfSize(
+                  cellLocation.row,
+                  cellLocation.column
+                )
+              : strings.insertTableOfSize(cellLocation.row, cellLocation.column),
         disabled: !cellLocation.column || !cellLocation.row,
         onClick: () =>
-          onInsertTable({
-            columns: cellLocation.column,
-            rows: cellLocation.row
-          })
+          onInsertTable(
+            {
+              columns: cellLocation.column,
+              rows: cellLocation.row
+            },
+            numbered
+          )
       }}
     >
       <Flex
         sx={{ px: 1, pt: 1, flexDirection: "column", alignItems: "center" }}
       >
+        <Flex sx={{ width: "100%", gap: 1, mb: 1 }}>
+          <TableTypeButton
+            title={strings.table()}
+            isActive={!numbered}
+            onClick={() => setNumbered(false)}
+          />
+          <TableTypeButton
+            title={strings.numberedTable()}
+            isActive={numbered}
+            onClick={() => setNumbered(true)}
+          />
+        </Flex>
+        {numbered ? (
+          <Text
+            variant={"body"}
+            sx={{ mb: 1, textAlign: "center", fontSize: 12, opacity: 0.7 }}
+          >
+            {strings.rankColumnNotice()}
+          </Text>
+        ) : null}
         <Box
           sx={{
             display: "grid",
@@ -137,10 +166,13 @@ export function TablePopup(props: TablePopupProps) {
                   e.preventDefault();
                 }}
                 onClick={() => {
-                  onInsertTable({
-                    columns: cellLocation.column,
-                    rows: cellLocation.row
-                  });
+                  onInsertTable(
+                    {
+                      columns: cellLocation.column,
+                      rows: cellLocation.row
+                    },
+                    numbered
+                  );
                 }}
               />
             ))}
@@ -189,6 +221,30 @@ export function TablePopup(props: TablePopupProps) {
         </Text>
       </Flex>
     </Popup>
+  );
+}
+
+function TableTypeButton(props: {
+  title: string;
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  const { title, isActive, onClick } = props;
+  return (
+    <Button
+      variant="secondary"
+      onClick={onClick}
+      sx={{
+        flex: 1,
+        py: 1,
+        bg: isActive ? "accent" : "background-secondary",
+        color: isActive ? "accentForeground" : "paragraph",
+        borderRadius: "small",
+        fontSize: 14
+      }}
+    >
+      {title}
+    </Button>
   );
 }
 

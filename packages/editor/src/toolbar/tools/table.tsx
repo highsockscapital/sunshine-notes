@@ -34,6 +34,7 @@ import {
 } from "../../extensions/table/actions.js";
 import { MoreTools } from "../components/more-tools.js";
 import { menuButtonToTool, toolToMenuButton } from "./utils.js";
+import { Icons } from "../icons.js";
 import { getToolDefinition } from "../tool-definitions.js";
 import { CellProperties as CellPropertiesPopup } from "../popups/cell-properties.js";
 import { ColorTool } from "./colors.js";
@@ -60,6 +61,7 @@ export function TableSettings(props: ToolProps) {
         "insertRowBelow",
         "columnProperties",
         "rowProperties",
+        "toggleRowNumbering",
         "deleteRow",
         "deleteColumn",
         "deleteTable",
@@ -175,6 +177,7 @@ export function TableProperties(props: ToolProps) {
       splitCells(editor),
       cellProperties(editor),
       { type: "separator", key: "tableSeperator" },
+      toggleRowNumbering(editor),
       exportToCSV(editor),
       deleteTable(editor)
     ],
@@ -419,6 +422,28 @@ const exportToCSV = (editor: Editor): MenuButtonItem => ({
   ...toolToMenuButton(getToolDefinition("exportToCSV")),
   onClick: () => exportToCsvAction(editor)
 });
+
+const toggleRowNumbering = (editor: Editor): MenuButtonItem => ({
+  key: "toggleRowNumbering",
+  type: "button",
+  title: strings.toggleRowNumbering(),
+  icon: Icons.numberedList,
+  onClick: () => editor.chain().focus().toggleTableNumbering().run()
+});
+
+export function ToggleRowNumbering(props: ToolProps) {
+  const { editor } = props;
+
+  return (
+    <ToolButton
+      icon={props.icon}
+      title={props.title}
+      variant={props.variant}
+      toggled={!!editor.getAttributes("table").numbered}
+      onClick={() => editor.chain().focus().toggleTableNumbering().run()}
+    />
+  );
+}
 
 export const InsertColumnLeft = menuButtonToTool(insertColumnLeft);
 export const InsertColumnRight = menuButtonToTool(insertColumnRight);

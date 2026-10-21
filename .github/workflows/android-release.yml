@@ -62,7 +62,8 @@ jobs:
       - name: Build release APKs
         run: |
           cd apps/mobile/android
-          ENVFILE=.env.public ./gradlew assembleRelease --no-daemon
+          ENVFILE=.env.public ./gradlew assembleRelease --no-daemon \
+            -PreactNativeArchitectures=arm64-v8a
 
       - name: Resolve version
         id: version
@@ -80,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           cd apps/mobile/android/app/build/outputs/apk/release
-          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+          for abi in arm64-v8a; do
             if [ -f "app-$abi-release.apk" ]; then
               mv "app-$abi-release.apk" "sunshinenotes-$abi.apk"
             fi
@@ -101,7 +102,4 @@ jobs:
             - Sunshine branding, palette and Screenshot mode
           files: |
             apps/mobile/android/app/build/outputs/apk/release/sunshinenotes-arm64-v8a.apk
-            apps/mobile/android/app/build/outputs/apk/release/sunshinenotes-armeabi-v7a.apk
-            apps/mobile/android/app/build/outputs/apk/release/sunshinenotes-x86.apk
-            apps/mobile/android/app/build/outputs/apk/release/sunshinenotes-x86_64.apk
           token: ${{ secrets.GITHUB_TOKEN }}

@@ -241,13 +241,14 @@ const table = (editor: Editor): MenuItem => ({
         type: "popup",
         component: (props) => (
           <TablePopup
-            onInsertTable={(size) => {
+            onInsertTable={(size, numbered) => {
               editor
                 ?.chain()
                 .focus()
                 .insertTable({
                   rows: size.rows,
-                  cols: size.columns
+                  cols: size.columns,
+                  numbered
                 })
                 .run();
               props.onClick?.();

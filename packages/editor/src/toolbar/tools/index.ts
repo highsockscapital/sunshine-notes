@@ -66,7 +66,8 @@ import {
   CellBorderColor,
   CellTextColor,
   CellBorderWidth,
-  ExportToCSV
+  ExportToCSV,
+  ToggleRowNumbering
 } from "./table.js";
 import {
   ImageSettings,
@@ -179,6 +180,7 @@ const tools = {
   deleteRow: DeleteRow,
   deleteTable: DeleteTable,
   exportToCSV: ExportToCSV,
+  toggleRowNumbering: ToggleRowNumbering,
 
   outdent: Outdent,
   indent: Indent,

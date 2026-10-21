@@ -1760,6 +1760,8 @@ To remove the proxy, simply erase everything in the input.`,
   takePhotoUsingCamera: () => t`Take a photo using camera`,
   table: () => t`Table`,
   insertTable: () => t`Insert a table`,
+  numberedTable: () => t`Numbered table`,
+  toggleRowNumbering: () => t`Row numbering`,
   embed: () => t`Embed`,
   insertEmbed: () => t`Insert an embed`,
   attachment: () => t`Attachment`,
@@ -1810,6 +1812,10 @@ To remove the proxy, simply erase everything in the input.`,
 
   insertTableOfSize: (rows: number, columns: number) =>
     t`Insert a ${rows}x${columns} table`,
+  insertNumberedTableOfSize: (rows: number, columns: number) =>
+    t`Insert a ${rows}x${columns} numbered table`,
+  rankColumnNotice: () =>
+    t`A narrow rank column is added on the left for the numbers.`,
   setTableSizeNotice: () => t`Please set a table size`,
   clickToReset: (title: string) => t`Click to reset ${title}`,
   increase: (title: string) => t`Increase ${title}`,

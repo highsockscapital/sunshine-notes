@@ -233,20 +233,71 @@ img.ProseMirror-separator {
 }
 
 .ProseMirror table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
   margin: 0;
-  overflow-y: hidden;
-  table-layout: fixed;
+  overflow: hidden;
+}
+
+/**
+ * Numbered tables get their row numbers drawn by the browser itself, so
+ * they renumber themselves whenever rows are added, removed or moved and
+ * the numbers never have to be typed by hand.
+ */
+.ProseMirror table[data-numbered="true"] {
+  counter-reset: nn-rank;
+}
+
+.ProseMirror table[data-numbered="true"] td:first-child {
+  counter-increment: nn-rank;
+}
+
+.ProseMirror table[data-numbered="true"] td:first-child > *:first-child::before {
+  content: counter(nn-rank);
+  display: inline-block;
+  min-width: 1.5em;
+  margin-right: 0.4em;
+  color: var(--paragraph-secondary);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
 }
 
 .ProseMirror table td,
 .ProseMirror table th {
-  border: 1px solid var(--border);
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   box-sizing: border-box;
   min-width: 1em;
   padding: 7px 9px;
   position: relative;
   vertical-align: top;
+}
+
+.ProseMirror table tr > *:last-child {
+  border-right: 0;
+}
+
+.ProseMirror table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.ProseMirror table tr:first-child > *:first-child {
+  border-top-left-radius: 10px;
+}
+
+.ProseMirror table tr:first-child > *:last-child {
+  border-top-right-radius: 10px;
+}
+
+.ProseMirror table tbody tr:last-child > *:first-child {
+  border-bottom-left-radius: 10px;
+}
+
+.ProseMirror table tbody tr:last-child > *:last-child {
+  border-bottom-right-radius: 10px;
 }
 
 .ProseMirror table td > *,

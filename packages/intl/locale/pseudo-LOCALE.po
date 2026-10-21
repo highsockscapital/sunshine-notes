@@ -8136,3 +8136,19 @@ msgstr ""
 #: src/strings.ts:1701
 msgid "Zoom out"
 msgstr ""
+
+#: src/strings.ts:1763
+msgid "Numbered table"
+msgstr ""
+
+#: src/strings.ts:1764
+msgid "Row numbering"
+msgstr ""
+
+#: src/strings.ts:1815
+msgid "Insert a {rows}x{columns} numbered table"
+msgstr ""
+
+#: src/strings.ts:1817
+msgid "A narrow rank column is added on the left for the numbers."
+msgstr ""

@@ -55,7 +55,6 @@ import {
   eUnSubscribeEvent
 } from "../services/event-manager";
 import { useSettingStore } from "../stores/use-setting-store";
-import { useScreenshotModeStore } from "../stores/use-screenshot-mode-store";
 import {
   eCloseFullscreenEditor,
   eOnEnterEditor,
@@ -436,9 +435,9 @@ export default FluidPanelsView;
 
 const onChangeTab = async (event: { i: number; from: number }) => {
   if (event.i === 2) {
-    // the editor is not part of the notes list, so screenshot mode has to
-    // give way to it
-    useScreenshotModeStore.getState().disable();
+    // screenshot mode stays on when a note is opened: the point of it is
+    // to photograph the note itself, so the editor strips its own chrome
+    // instead of switching the mode off
     editorState().movedAway = false;
     editorState().isFocused = true;
     if (useSettingStore.getState().settings.keepScreenOn) {

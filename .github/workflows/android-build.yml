@@ -63,14 +63,14 @@ jobs:
         run: |
           cd apps/mobile/android
           ENVFILE=.env.public ./gradlew assembleRelease --no-daemon \
-            -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+            -PreactNativeArchitectures=arm64-v8a
 
       - name: Collect APKs
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/apk"
           cd apps/mobile/android/app/build/outputs/apk/release
-          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+          for abi in arm64-v8a; do
             if [ -f "app-$abi-release.apk" ]; then
               mv "app-$abi-release.apk" "$RUNNER_TEMP/apk/sunshinenotes-$abi.apk"
             fi

@@ -113,6 +113,7 @@ export function TableComponent(
         }}
       >
         <table
+          data-numbered={node.attrs.numbered ? "true" : undefined}
           ref={(ref) => {
             forwardRef?.(ref);
             tableRef.current = ref || undefined;

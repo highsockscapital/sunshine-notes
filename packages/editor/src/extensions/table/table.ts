@@ -20,6 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import {
   callOrReturn,
   Editor,
+  findParentNode,
   getExtensionField,
   mergeAttributes,
   Node,
@@ -29,6 +30,7 @@ import { DOMOutputSpec, Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { EditorView, NodeView } from "@tiptap/pm/view";
 import { createColGroup } from "./utilities/createColGroup.js";
+import { createNumberedTable } from "./utilities/createNumberedTable.js";
 import { createTable } from "./utilities/createTable.js";
 import { deleteTableWhenAllCellsSelected } from "./utilities/deleteTableWhenAllCellsSelected.js";
 import { TableNodeView } from "./component.js";
@@ -111,7 +113,20 @@ declare module "@tiptap/core" {
         rows?: number;
         cols?: number;
         withHeaderRow?: boolean;
+        /**
+         * Adds a narrow rank column on the left whose numbers are
+         * generated automatically.
+         */
+        numbered?: boolean;
       }) => ReturnType;
+
+      /**
+       * Toggle automatic row numbering on the current table. The numbers
+       * are rendered in the first column of every row.
+       * @returns True if the command was successful, otherwise false
+       * @example editor.commands.toggleTableNumbering()
+       */
+      toggleTableNumbering: () => ReturnType;
 
       /**
        * Add a column before the current column
@@ -295,6 +310,21 @@ export const Table = Node.create<TableOptions>({
 
   content: "tableRow+",
 
+  addAttributes() {
+    return {
+      /**
+       * Whether the rows of this table are automatically numbered.
+       */
+      numbered: {
+        default: false,
+        parseHTML: (element) =>
+          element.getAttribute("data-numbered") === "true",
+        renderHTML: (attributes) =>
+          attributes.numbered ? { "data-numbered": "true" } : {}
+      }
+    };
+  },
+
   tableRole: "table",
 
   isolating: true,
@@ -328,16 +358,29 @@ export const Table = Node.create<TableOptions>({
   addCommands() {
     return {
       insertTable:
-        ({ rows = 3, cols = 3, withHeaderRow = true } = {}) =>
+        ({
+          rows = 3,
+          cols = 3,
+          withHeaderRow = true,
+          numbered = false
+        } = {}) =>
         ({ tr, dispatch, editor }) => {
-          const node = createTable(
-            editor.schema,
-            rows,
-            cols,
-            withHeaderRow,
-            undefined,
-            this.options.defaultCellAttrs
-          );
+          const node = numbered
+            ? createNumberedTable(
+                editor.schema,
+                rows,
+                cols,
+                withHeaderRow,
+                this.options.defaultCellAttrs
+              )
+            : createTable(
+                editor.schema,
+                rows,
+                cols,
+                withHeaderRow,
+                undefined,
+                this.options.defaultCellAttrs
+              );
 
           if (dispatch) {
             const offset = tr.selection.from + 1;
@@ -345,6 +388,23 @@ export const Table = Node.create<TableOptions>({
             tr.replaceSelectionWith(node)
               .scrollIntoView()
               .setSelection(TextSelection.near(tr.doc.resolve(offset)));
+          }
+
+          return true;
+        },
+      toggleTableNumbering:
+        () =>
+        ({ state, dispatch, tr }) => {
+          const table = findParentNode(
+            (node) => node.type.name === "table"
+          )(state.selection.$from);
+          if (!table) return false;
+
+          if (dispatch) {
+            tr.setNodeMarkup(table.pos, undefined, {
+              ...table.node.attrs,
+              numbered: !table.node.attrs.numbered
+            });
           }
 
           return true;

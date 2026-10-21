@@ -8197,3 +8197,19 @@ msgstr "Zoom in or out the app content."
 #: src/strings.ts:1701
 msgid "Zoom out"
 msgstr "Zoom out"
+
+#: src/strings.ts:1763
+msgid "Numbered table"
+msgstr "Numbered table"
+
+#: src/strings.ts:1764
+msgid "Row numbering"
+msgstr "Row numbering"
+
+#: src/strings.ts:1815
+msgid "Insert a {rows}x{columns} numbered table"
+msgstr "Insert a {rows}x{columns} numbered table"
+
+#: src/strings.ts:1817
+msgid "A narrow rank column is added on the left for the numbers."
+msgstr "A narrow rank column is added on the left for the numbers."

@@ -355,6 +355,11 @@ const tools = (): Record<ToolId, ToolDefinition> => ({
     icon: "csv",
     title: strings.exportCsv(),
     conditional: true
+  },
+  toggleRowNumbering: {
+    icon: "numberedList",
+    title: strings.toggleRowNumbering(),
+    conditional: true
   }
 });
 

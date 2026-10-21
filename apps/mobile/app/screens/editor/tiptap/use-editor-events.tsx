@@ -57,6 +57,7 @@ import Navigation from "../../../services/navigation";
 import SettingsService from "../../../services/settings";
 import useNavigationStore from "../../../stores/use-navigation-store";
 import { useRelationStore } from "../../../stores/use-relation-store";
+import { useScreenshotModeStore } from "../../../stores/use-screenshot-mode-store";
 import { useSettingStore } from "../../../stores/use-setting-store";
 import { useTagStore } from "../../../stores/use-tag-store";
 import {
@@ -142,6 +143,10 @@ export const useEditorEvents = (
     (state) => state.settings.markdownShortcuts
   );
 
+  // in screenshot mode the editor drops its own header and toolbar so the
+  // note fills the screen, exactly like the notes list does
+  const screenshotMode = useScreenshotModeStore((state) => state.enabled);
+
   const tools = useDragState((state) => state.data);
   useEffect(() => {
     const handleKeyboardDidShow: KeyboardEventListener = () => {
@@ -171,8 +176,8 @@ export const useEditorEvents = (
       fullscreen: fullscreen || false,
       readonly: false,
       tools: tools || getDefaultPresets().default,
-      noHeader: noHeader,
-      noToolbar: noToolbar,
+      noHeader: noHeader || screenshotMode,
+      noToolbar: noToolbar || screenshotMode,
       doubleSpacedLines: doubleSpacedLines,
       corsProxy: corsProxy,
       fontSize:
@@ -197,6 +202,7 @@ export const useEditorEvents = (
     doubleSpacedLines,
     noHeader,
     noToolbar,
+    screenshotMode,
     corsProxy,
     defaultFontSize,
     defaultFontFamily,
@@ -240,6 +246,12 @@ export const useEditorEvents = (
 
   const onHardwareBackPress = useCallback(() => {
     if (fluidTabsRef.current?.page() === "editor") {
+      if (useScreenshotModeStore.getState().enabled) {
+        // the first back press leaves screenshot mode, the second one
+        // leaves the editor
+        useScreenshotModeStore.getState().disable();
+        return true;
+      }
       if (
         useNavigationStore.getState().currentRoute === "ManageTags" ||
         useNavigationStore.getState().currentRoute === "LinkNotebooks" ||
